@@ -882,7 +882,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
   const lastBot = useRef(null)
   useEffect(() => {
     if (!roster.ready || !roster.mainBotId) return undefined
-    const [id, blank] = mainView.split('|')
+    const [id] = mainView.split('|')
     const bot = id === '' ? undefined : roster.byId[id]
     if (bot !== undefined) {
       lastBot.current = { botId: bot.id, sessionId: id }
