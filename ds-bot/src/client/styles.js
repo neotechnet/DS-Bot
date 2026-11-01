@@ -138,6 +138,11 @@ body:not([data-bt-motion=quiet]) .bt-badge-waiting{animation:bt-wait-tick 2.4s e
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-track{background:transparent}
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-thumb{border:4px solid transparent;border-radius:6px;background:color-mix(in srgb,var(--bt-ink) 16%,transparent) padding-box}
 .bt-side:not(.bt-rail)>.bt-list:hover::-webkit-scrollbar-thumb{background-color:color-mix(in srgb,var(--bt-ink) 30%,transparent)}
+/* Main Bots tile in a grid: the shell's sidebar holds the whole Bot list here, so the
+   first rows are the Bots that answer for the team rather than a single seat. */
+.bt-tile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));justify-items:center;align-self:stretch;padding:8px 0 2px}
+.bt-tile-grid>.bt-tile-wrap{padding:6px 0}
+.bt-tile-grid .bt-tile{width:100%;max-width:112px}
 .bt-tile-wrap{display:flex;justify-content:center;padding:20px 0 15px}
 .bt-tile{display:flex;flex-direction:column;align-items:center;gap:4px;width:95px;padding:6px 8px 4px;border-radius:12px;border:0;background:transparent;color:var(--bt-ink);cursor:pointer;font-family:inherit;transition:background-color .12s ease}
 .bt-tile:hover{background:var(--bt-hover)}
@@ -159,14 +164,16 @@ body:not([data-bt-motion=quiet]) .bt-badge-waiting{animation:bt-wait-tick 2.4s e
    Mica the app styles DSH's sidebar the same way, via --bt-leftcol-fill there);
    it stays under the shell's title-bar switch (z 30) and the popovers (z 60),
    and the floating drawer keeps the opaque fill over the conversation. */
-.bt-leftcol{position:fixed;left:0;top:0;bottom:0;z-index:25;display:flex;--bt-lc-clear:var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px));background:var(--bt-leftcol-fill,var(--bt-sidebar));border-right:.5px solid var(--bt-line);box-sizing:border-box;padding:calc(var(--bt-lc-clear) + 6px) 12px 6px;color:var(--bt-ink);font-family:var(--bt-font)}
+.bt-leftcol{position:relative;left:auto;top:auto;bottom:auto;z-index:auto;display:flex;flex-direction:column;min-height:0;--bt-lc-clear:0px;background:none;border-right:none;box-sizing:border-box;padding:0;color:var(--bt-ink);font-family:var(--bt-font)}
+/* The shell's column is the resizer here, and our edge drag would fight it. */
+.bt-leftcol>.bt-leftcol-grip{display:none}
 html[data-windows-titlebar] .bt-leftcol,html[data-platform=darwin] .bt-leftcol{border-right:none}
 .bt-leftcol-grip{position:absolute;right:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:3;touch-action:none}
 .bt-leftcol-grip:hover,.bt-leftcol-grip:active{background:linear-gradient(to right,transparent 3px,var(--bt-line-2) 3px,var(--bt-line-2) 5px,transparent 5px)}
 /* The shell's collapsed sidebar keeps no track in the Bot view, so a hidden
    column leaves nothing behind (the shell's right column, when open, keeps its
    own geometry). Our own collapse of it lands without the shell's slide. */
-[class*="_frame"][data-sidebar-collapsed][data-rightbar-collapsed]:has(>[class*="_sidebarCol"]){grid-template-columns:0px minmax(0,1fr) 0px!important}
+/* The shell keeps its own tracks while the Bot list sits inside them. */
 html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transition:none!important}
 .bt-leftcol[data-left=drawer]{background:var(--bt-sidebar);box-shadow:8px 0 24px rgba(0,0,0,.14)}
 .bt-leftcol>.bt-side{width:100%}

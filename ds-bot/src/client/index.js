@@ -52,6 +52,27 @@ export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'th
 export function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
+  // The shell's own sidebar needs to know which Sessions belong to the Bots, so it can
+  // leave them out of its own lists. Published on the window as well, for a reload.
+  ctx.effect(() => {
+    const publish = () => {
+      const snap = roster.getSnapshot()
+      const ids = [...new Set([
+        ...snap.bots.flatMap(bot => [bot.id, currentPart(bot), ...(bot.parts ?? [])]),
+        ...snap.rooms.flatMap(room => [room.id, ...(room.parts ?? [])]),
+        ...Object.keys(snap.agentOf ?? {}),
+      ])]
+      window.__dshBotSessions = ids
+      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: ids }))
+    }
+    const off = roster.subscribe(publish)
+    publish()
+    return () => {
+      off()
+      window.__dshBotSessions = []
+      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: [] }))
+    }
+  }, 'ds-bot: publish owned sessions')
   migrateStorage()
   const unreadStore = sharedMap(STORAGE.unread)
   const reactionStore = sharedMap(STORAGE.reactions)
@@ -990,7 +1011,11 @@ export function apply(ctx) {
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot()
       const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-      const plain = isAgentSessionId(main)
+      // A main view no Bot or room owns is not an Agent Session: it is ours to draw.
+      const snap = roster.getSnapshot()
+      const unowned = main !== undefined && snap.byId[main] === undefined && snap.roomsById[main] === undefined
+        && !(snap.rooms ?? []).some(room => room.sessionId === main || (room.parts ?? []).includes(main))
+      const plain = isAgentSessionId(main) || (snap.ready && unowned)
       setPlain(plain)
       if (plain) dropPanels()
       if (main === previous) return

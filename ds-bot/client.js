@@ -2532,6 +2532,11 @@ body:not([data-bt-motion=quiet]) .bt-badge-waiting{animation:bt-wait-tick 2.4s e
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-track{background:transparent}
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-thumb{border:4px solid transparent;border-radius:6px;background:color-mix(in srgb,var(--bt-ink) 16%,transparent) padding-box}
 .bt-side:not(.bt-rail)>.bt-list:hover::-webkit-scrollbar-thumb{background-color:color-mix(in srgb,var(--bt-ink) 30%,transparent)}
+/* Main Bots tile in a grid: the shell's sidebar holds the whole Bot list here, so the
+   first rows are the Bots that answer for the team rather than a single seat. */
+.bt-tile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));justify-items:center;align-self:stretch;padding:8px 0 2px}
+.bt-tile-grid>.bt-tile-wrap{padding:6px 0}
+.bt-tile-grid .bt-tile{width:100%;max-width:112px}
 .bt-tile-wrap{display:flex;justify-content:center;padding:20px 0 15px}
 .bt-tile{display:flex;flex-direction:column;align-items:center;gap:4px;width:95px;padding:6px 8px 4px;border-radius:12px;border:0;background:transparent;color:var(--bt-ink);cursor:pointer;font-family:inherit;transition:background-color .12s ease}
 .bt-tile:hover{background:var(--bt-hover)}
@@ -2553,14 +2558,16 @@ body:not([data-bt-motion=quiet]) .bt-badge-waiting{animation:bt-wait-tick 2.4s e
    Mica the app styles DSH's sidebar the same way, via --bt-leftcol-fill there);
    it stays under the shell's title-bar switch (z 30) and the popovers (z 60),
    and the floating drawer keeps the opaque fill over the conversation. */
-.bt-leftcol{position:fixed;left:0;top:0;bottom:0;z-index:25;display:flex;--bt-lc-clear:var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px));background:var(--bt-leftcol-fill,var(--bt-sidebar));border-right:.5px solid var(--bt-line);box-sizing:border-box;padding:calc(var(--bt-lc-clear) + 6px) 12px 6px;color:var(--bt-ink);font-family:var(--bt-font)}
+.bt-leftcol{position:relative;left:auto;top:auto;bottom:auto;z-index:auto;display:flex;flex-direction:column;min-height:0;--bt-lc-clear:0px;background:none;border-right:none;box-sizing:border-box;padding:0;color:var(--bt-ink);font-family:var(--bt-font)}
+/* The shell's column is the resizer here, and our edge drag would fight it. */
+.bt-leftcol>.bt-leftcol-grip{display:none}
 html[data-windows-titlebar] .bt-leftcol,html[data-platform=darwin] .bt-leftcol{border-right:none}
 .bt-leftcol-grip{position:absolute;right:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:3;touch-action:none}
 .bt-leftcol-grip:hover,.bt-leftcol-grip:active{background:linear-gradient(to right,transparent 3px,var(--bt-line-2) 3px,var(--bt-line-2) 5px,transparent 5px)}
 /* The shell's collapsed sidebar keeps no track in the Bot view, so a hidden
    column leaves nothing behind (the shell's right column, when open, keeps its
    own geometry). Our own collapse of it lands without the shell's slide. */
-[class*="_frame"][data-sidebar-collapsed][data-rightbar-collapsed]:has(>[class*="_sidebarCol"]){grid-template-columns:0px minmax(0,1fr) 0px!important}
+/* The shell keeps its own tracks while the Bot list sits inside them. */
 html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transition:none!important}
 .bt-leftcol[data-left=drawer]{background:var(--bt-sidebar);box-shadow:8px 0 24px rgba(0,0,0,.14)}
 .bt-leftcol>.bt-side{width:100%}
@@ -9387,7 +9394,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const main = isMainOf(roster, id);
-  const tile = roster.mainBotId === id;
+  const tile = isMainOf(roster, id) || roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
@@ -9651,13 +9658,13 @@ function useListGlide(listRef, layout, key) {
     tops.current = { layout, map: next };
   }, [layout, key]);
 }
-function LeftColumn({ mode, width, onGrip, children }) {
-  return (0, import_react_dom3.createPortal)((0, import_react19.createElement)(
+function LeftColumn({ mode, onGrip, children }) {
+  return (0, import_react19.createElement)(
     "div",
-    { className: "bt-leftcol", "data-left": mode, style: { width: `${width}px` } },
+    { className: "bt-leftcol", "data-left": mode },
     children,
     (0, import_react19.createElement)("div", { className: "bt-leftcol-grip", role: "separator", "aria-orientation": "vertical", "aria-label": t("Resize sidebar"), title: t("Resize sidebar"), onPointerDown: onGrip })
-  ), document.body);
+  );
 }
 function TitleToggle({ hidden, onToggle }) {
   if (typeof document === "undefined") return null;
@@ -9703,7 +9710,7 @@ function TeamSidebar(props) {
   const order = (0, import_react19.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...roster.bots.filter((bot) => !isMainOf(roster, bot.id) && bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
@@ -9711,6 +9718,7 @@ function TeamSidebar(props) {
     return entries2.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at);
   }, [roster, updated]);
   const main = roster.byId[roster.mainBotId];
+  const tileBots = [main, ...(roster.mainBotIds ?? []).map((id) => roster.byId[id])].filter((bot, index, all) => bot !== void 0 && all.findIndex((candidate) => candidate !== void 0 && candidate.id === bot.id) === index);
   useListGlide(listRef, wideContent, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
   const openWidth = drag?.width ?? frameSnap.sidebarWidth;
@@ -9718,7 +9726,7 @@ function TeamSidebar(props) {
   const pushed = mode === "open" ? openWidth : mode === "hidden" ? 0 : RAIL_WIDTH;
   (0, import_react19.useLayoutEffect)(() => {
     if (typeof document === "undefined") return;
-    chatRoom.setLeft(Math.max(0, pushed - (frameSnap.collapsedWidth ?? 0)));
+    chatRoom.setLeft(null);
   }, [pushed, frameSnap.collapsedWidth]);
   (0, import_react19.useEffect)(() => () => {
     if (typeof document !== "undefined") chatRoom.setLeft(null);
@@ -9847,7 +9855,6 @@ function TeamSidebar(props) {
     if (requested.current) return void 0;
     requested.current = true;
     quiet(true);
-    actions.toggleSidebar();
     clearTimeout(requestLapse.current);
     requestLapse.current = setTimeout(() => {
       requested.current = false;
@@ -9893,7 +9900,7 @@ function TeamSidebar(props) {
     event.preventDefault();
     actions.openPalette(event.key);
   };
-  const onToggle = () => actions.toggleLeftHidden?.();
+  const onToggle = () => (actions.toggleSidebar ?? actions.toggleLeftHidden)?.();
   const toggleRef = (0, import_react19.useRef)(onToggle);
   toggleRef.current = onToggle;
   (0, import_react19.useEffect)(() => {
@@ -9924,11 +9931,11 @@ function TeamSidebar(props) {
     main ? (0, import_react19.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react19.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")),
     (0, import_react19.createElement)("span", { className: "bt-rail-sep", "aria-hidden": true })
   );
-  const foot = wideContent ? (0, import_react19.createElement)("div", { className: "bt-leftcol-foot" }, (0, import_react19.createElement)(AccountLauncher, { seat: false, actions })) : (0, import_react19.createElement)(
+  const foot = wideContent ? uiNow.accountSeated ? null : (0, import_react19.createElement)("div", { className: "bt-leftcol-foot" }, (0, import_react19.createElement)(AccountLauncher, { seat: false, actions })) : (0, import_react19.createElement)(
     "div",
     { className: "bt-leftcol-foot bt-leftcol-foot-rail" },
     (0, import_react19.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("New…"), title: t("New…"), onClick: () => actions.openNewChat("new") }, (0, import_react19.createElement)(PlusIcon)),
-    (0, import_react19.createElement)(AccountLauncher, { seat: false, actions })
+    uiNow.accountSeated ? null : (0, import_react19.createElement)(AccountLauncher, { seat: false, actions })
   );
   const content = (0, import_react19.createElement)(
     "div",
@@ -9938,7 +9945,7 @@ function TeamSidebar(props) {
     (0, import_react19.createElement)(
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
-      wideContent ? main ? (0, import_react19.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react19.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
+      wideContent ? tileBots.length > 0 ? (0, import_react19.createElement)("div", { className: "bt-tile-grid" }, tileBots.map((bot) => (0, import_react19.createElement)(BotRow, { key: bot.id, ...rowProps, bot, marked: markedUnread[bot.id] === true }))) : roster.ready ? null : (0, import_react19.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
       order.map((entry) => entry.kind === "bot" ? (0, import_react19.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react19.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react19.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     ),
     foot
@@ -10303,7 +10310,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
       if ((room2.sessionId ?? room2.id) !== id) actions.openSession(room2.id);
       return void 0;
     }
-    if (id !== "" && ((actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || blank3 !== "1")) {
+    if (id !== "") {
       lastBot.current = null;
       return void 0;
     }
@@ -20570,6 +20577,25 @@ var inject = ["sessions", "uiWorkspace", "uiConversation", "slots", "theme", "la
 function apply(ctx) {
   ctx.effect(() => installLocale(ctx.get("locale")), "ds-bot: interface copy");
   const roster = createSource(EMPTY_ROSTER);
+  ctx.effect(() => {
+    const publish2 = () => {
+      const snap = roster.getSnapshot();
+      const ids = [.../* @__PURE__ */ new Set([
+        ...snap.bots.flatMap((bot) => [bot.id, currentPart(bot), ...bot.parts ?? []]),
+        ...snap.rooms.flatMap((room2) => [room2.id, ...room2.parts ?? []]),
+        ...Object.keys(snap.agentOf ?? {})
+      ])];
+      window.__dshBotSessions = ids;
+      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: ids }));
+    };
+    const off = roster.subscribe(publish2);
+    publish2();
+    return () => {
+      off();
+      window.__dshBotSessions = [];
+      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: [] }));
+    };
+  }, "ds-bot: publish owned sessions");
   migrateStorage();
   const unreadStore = sharedMap(STORAGE.unread);
   const reactionStore = sharedMap(STORAGE.reactions);
@@ -21467,7 +21493,9 @@ function apply(ctx) {
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot();
       const main = Object.values(list.byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
-      const plain = isAgentSessionId(main);
+      const snap = roster.getSnapshot();
+      const unowned = main !== void 0 && snap.byId[main] === void 0 && snap.roomsById[main] === void 0 && !(snap.rooms ?? []).some((room2) => room2.sessionId === main || (room2.parts ?? []).includes(main));
+      const plain = isAgentSessionId(main) || snap.ready && unowned;
       setPlain(plain);
       if (plain) dropPanels();
       if (main === previous) return;

@@ -64,7 +64,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)
   const main = isMainOf(roster, id)
-  const tile = roster.mainBotId === id
+  const tile = isMainOf(roster, id) || roster.mainBotId === id
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
@@ -269,10 +269,10 @@ function useListGlide(listRef, layout, key) {
 // collapsed sidebar: the open column or the avatar rail push the conversation
 // over, the drawer floats above it. Its right edge drags the open width, and
 // down to the rail.
-function LeftColumn({ mode, width, onGrip, children }) {
-  return createPortal(h('div', { className: 'bt-leftcol', 'data-left': mode, style: { width: `${width}px` } },
+function LeftColumn({ mode, onGrip, children }) {
+  return h('div', { className: 'bt-leftcol', 'data-left': mode },
     children,
-    h('div', { className: 'bt-leftcol-grip', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('Resize sidebar'), title: t('Resize sidebar'), onPointerDown: onGrip })), document.body)
+    h('div', { className: 'bt-leftcol-grip', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': t('Resize sidebar'), title: t('Resize sidebar'), onPointerDown: onGrip }))
 }
 
 // The top-left switch hides the whole column and brings it back. Under a
@@ -326,7 +326,7 @@ export function TeamSidebar(props) {
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
     const entries = [
-      ...roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...roster.bots.filter(bot => !isMainOf(roster, bot.id) && bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
@@ -334,6 +334,9 @@ export function TeamSidebar(props) {
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated])
   const main = roster.byId[roster.mainBotId]
+  // Every Main Bot tiles, not only the first: one Bot per row would push the team down.
+  const tileBots = [main, ...(roster.mainBotIds ?? []).map(id => roster.byId[id])]
+    .filter((bot, index, all) => bot !== undefined && all.findIndex(candidate => candidate !== undefined && candidate.id === bot.id) === index)
   useListGlide(listRef, wideContent, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
 
@@ -345,7 +348,7 @@ export function TeamSidebar(props) {
   const pushed = mode === 'open' ? openWidth : mode === 'hidden' ? 0 : RAIL_WIDTH
   useLayoutEffect(() => {
     if (typeof document === 'undefined') return
-    chatRoom.setLeft(Math.max(0, pushed - (frameSnap.collapsedWidth ?? 0)))
+    chatRoom.setLeft(null)
   }, [pushed, frameSnap.collapsedWidth])
   useEffect(() => () => { if (typeof document !== 'undefined') chatRoom.setLeft(null) }, [])
 
@@ -489,7 +492,6 @@ export function TeamSidebar(props) {
     if (requested.current) return undefined
     requested.current = true
     quiet(true)
-    actions.toggleSidebar()
     clearTimeout(requestLapse.current)
     requestLapse.current = setTimeout(() => { requested.current = false; quiet(false); setLapsed(value => value + 1) }, 300)
     return undefined
@@ -534,7 +536,7 @@ export function TeamSidebar(props) {
   }
   // The switch (top-left button, the shortcut) hides the whole column or brings
   // back the one it hid.
-  const onToggle = () => actions.toggleLeftHidden?.()
+  const onToggle = () => (actions.toggleSidebar ?? actions.toggleLeftHidden)?.()
   // The shell's sidebar shortcut is caught on its way down, before the shell's
   // own listener on window sees it: left to the shell, it would expand the shell's
   // sidebar first and our sync would pull it back, a visible flash.
@@ -567,15 +569,15 @@ export function TeamSidebar(props) {
   // The foot stands in for the shell's hidden footer: the account avatar, and on
   // the rail the new-chat button above it.
   const foot = wideContent
-    ? h('div', { className: 'bt-leftcol-foot' }, h(AccountLauncher, { seat: false, actions }))
+    ? uiNow.accountSeated ? null : h('div', { className: 'bt-leftcol-foot' }, h(AccountLauncher, { seat: false, actions }))
     : h('div', { className: 'bt-leftcol-foot bt-leftcol-foot-rail' },
         h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),
-        h(AccountLauncher, { seat: false, actions }))
+        uiNow.accountSeated ? null : h(AccountLauncher, { seat: false, actions }))
   const content = h('div', { className: wideContent ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     top,
     wideContent && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, uiNow.bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
+      wideContent ? (tileBots.length > 0 ? h('div', { className: 'bt-tile-grid' }, tileBots.map(bot => h(BotRow, { key: bot.id, ...rowProps, bot, marked: markedUnread[bot.id] === true }))) : roster.ready ? null : h('div', { className: 'bt-hint' }, uiNow.bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
       order.map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'
@@ -896,7 +898,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
       return undefined
     }
     // A DSH Agent Session, blank or not, is a real destination: it stays.
-    if (id !== '' && ((actions.isAgentSession?.(id) ?? roster.agentOf[id] !== undefined) || blank !== '1')) {
+    if (id !== '') {
       lastBot.current = null
       return undefined
     }

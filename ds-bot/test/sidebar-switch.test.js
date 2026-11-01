@@ -334,11 +334,13 @@ test('what the team view replaces in the shell sidebar stays out of sight', () =
   }
 })
 
-// The shell's collapsed sidebar keeps no track in the Bot view, so a hidden
-// column leaves nothing behind; the shell's right column keeps its own geometry.
-test('the shell\'s collapsed sidebar keeps no track while its right column is closed', () => {
+// Local fork: the Bot list sits inside the shell's own sidebar column, so the shell
+// keeps its grid tracks and this plugin must not zero them. Upstream zeroes them
+// because its column is portalled over a collapsed sidebar; here that rule would
+// remove the very track our column lives in.
+test('the shell keeps its own grid tracks, since our column lives inside them', () => {
   const frame = [...rulesOf(SHELL_CSS), ...rulesOf(SIDEBAR_CSS)].find(rule => rule.selector.includes('[data-sidebar-collapsed][data-rightbar-collapsed]'))
-  assert.match(frame?.body ?? '', /grid-template-columns:0px/)
+  assert.equal(frame, undefined)
 })
 
 test('the column\'s top row hides it, on the rail too, and its edge is a drag grip', () => {
@@ -350,7 +352,9 @@ test('the column\'s top row hides it, on the rail too, and its edge is a drag gr
     useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
     useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
     useSidebarPref: pick => pick(pref),
-    actions: { toggleLeftHidden: () => calls.push('toggle'), toggleSidebar: () => {} },
+    // Local fork: the column is seated inside the shell's sidebar, so the switch
+    // collapses the shell. The plugin's own hide stays as the fallback.
+    actions: { toggleLeftHidden: () => calls.push('own'), toggleSidebar: () => calls.push('shell') },
   })
   const find = (node, match) => {
     if (Array.isArray(node)) return node.map(child => find(child, match)).find(Boolean)
@@ -367,7 +371,12 @@ test('the column\'s top row hides it, on the rail too, and its edge is a drag gr
     assert.equal(column.props.mode, pref)
     assert.equal(typeof column.props.onGrip, 'function')
   }
-  assert.deepEqual(calls, ['toggle', 'toggle'])
+  assert.deepEqual(calls, ['shell', 'shell'])
+  // Without the shell's own toggle, the column hides itself instead of failing.
+  const own = []
+  const fallback = TeamSidebar({ ...props('open'), actions: { toggleLeftHidden: () => own.push('own') } })
+  find(fallback, collapse).props.onClick()
+  assert.deepEqual(own, ['own'])
   // Hidden, there is no column at all; the floating switch brings it back.
   const hidden = TeamSidebar(props('hidden'))
   assert.equal(find(hidden, node => node.type?.name === 'LeftColumn'), undefined)
