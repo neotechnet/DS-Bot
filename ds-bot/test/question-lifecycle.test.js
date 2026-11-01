@@ -1,5 +1,5 @@
-// How a question card ends: answered, overtaken by a finished turn that asks nothing, or
-// voided by a Main Bot. Whatever ended it, a late click is refused.
+// How a question card ends: answered, overtaken by a finished turn the user can see that
+// asks nothing, or voided by a Main Bot. Whatever ended it, a late click is refused.
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -104,6 +104,16 @@ async function turn(team, id, number, during, reason = { kind: 'completed' }) {
   team.emit(id, 'turn/end', { turn: number, reason })
 }
 
+// One turn another Bot started, on the message delivery really handed over.
+async function botTurn(team, id, number, args) {
+  await team.tool('message_bot', args, 'a')
+  const [, message] = team.agentOf(id).calls.at(-1)
+  team.emit(id, 'turn/start', { turn: number })
+  team.emit(id, 'user/message', { content: message.content, source: message.source })
+  team.emit(id, 'assistant/message', { message: { content: [{ type: 'text', text: 'Done.' }] } })
+  team.emit(id, 'turn/end', { turn: number, reason: { kind: 'completed' } })
+}
+
 test('the turn that asks keeps its card', async (t) => {
   const team = await start()
   t.after(team.stop)
@@ -116,6 +126,35 @@ test('a card followed by a plain turn leaves nothing pending', async (t) => {
   t.after(team.stop)
   await turn(team, 'b', 1, () => team.tool('ask_user', card, 'b'))
   await turn(team, 'b', 2)
+  assert.equal(await team.pending('b'), undefined)
+})
+
+test('a hidden Bot-to-Bot turn leaves a waiting card for the user, who can still answer it', async (t) => {
+  const team = await start()
+  t.after(team.stop)
+  await turn(team, 'b', 1, () => team.tool('ask_user', card, 'b'))
+  const { id } = await team.pending('b')
+  await botTurn(team, 'b', 2, { to: 'Writer', message: 'Status?' })
+  const waiting = await team.pending('b')
+  assert.equal(waiting?.id, id)
+  const answered = await team.call('answer-question', { sessionId: 'b', questionId: id, answer: { selected: ['Left'] } })
+  assert.equal(answered.ok, true)
+})
+
+test('a card that outlived a hidden turn closes at the next turn the user sees', async (t) => {
+  const team = await start()
+  t.after(team.stop)
+  await turn(team, 'b', 1, () => team.tool('ask_user', card, 'b'))
+  await botTurn(team, 'b', 2, { to: 'Writer', message: 'Status?' })
+  await turn(team, 'b', 3)
+  assert.equal(await team.pending('b'), undefined)
+})
+
+test('a Bot-started turn that answers the user in its own chat clears the card', async (t) => {
+  const team = await start()
+  t.after(team.stop)
+  await turn(team, 'b', 1, () => team.tool('ask_user', card, 'b'))
+  await botTurn(team, 'b', 2, { to: 'Writer', message: 'Say hello.', reply_to: 'user' })
   assert.equal(await team.pending('b'), undefined)
 })
 

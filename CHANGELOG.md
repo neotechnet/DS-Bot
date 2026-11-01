@@ -6,7 +6,7 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 
 ### Changed
 
-- A question card closes when its Bot finishes a later turn that asks nothing, so a stale card no longer stays on screen until you answer it. A click on a closed card is refused.
+- A question card closes when its Bot finishes a later turn you can see that asks nothing, so a stale card no longer stays on screen until you answer it. A hidden turn that only answers another Bot leaves the card open. A click on a closed card is refused.
 
 ### Added
 
