@@ -107,6 +107,11 @@ const RETRY_PROMISE_TEXT = 'Your last reply said you would start working, but yo
 const PROMISED_WORK = /(?:^(?:收到|好的|明白|好|行|没问题|了解)[，,、。.!！：\s]*(?:我(?:现在|这就|先|马上|立刻|去|来)?(?:开始|着手|去|来|准备)?(?:排查|检查|调查|查看|看看|搜索|搜一下|分析|处理|执行|运行|跑一下|修改|修复|实现|编写|整理|验证|测试|读一下|翻一下)|(?:现在|马上|立刻)?(?:开始|着手)(?:执行|处理|排查|检查|调查|干活|开工)|开工(?:[。！!，,\s]|$))|^(?:开工(?:[。！!，,\s]|$)|我(?:现在|这就|先|马上|立刻)(?:开始|着手|去)(?:排查|检查|调查|查看|搜索|分析|处理|执行|运行|修改|修复|实现|编写|整理|验证|测试))|\b(?:(?:i\s+will|i'll|let\s+me|going\s+to)\s+(?:start|begin|check|look\s+into|investigate|search|run|inspect|read|fix|implement|work\s+on)\b|(?:starting|beginning)\s+(?:the\s+)?(?:investigation|check|search|work|execution|analysis)\b|^on\s+it[,.\s!]+(?:i'll|i\s+will|let\s+me|starting|checking)\b))/i
 export const promisesWork = text => typeof text === 'string' && text.trim().length <= 240 && PROMISED_WORK.test(text.trim())
 
+// What a hand-back carries in place of the body. The Bot already read that message in
+// this Session, so sending it again makes the model read one message twice; the pointer
+// is enough to say the work is over and this one is now due an answer.
+export const HANDED_BACK = 'You read its text during that task; it is above in this session. Answer it now.'
+
 export function install(rt) {
   const { ctx, state } = rt
 
@@ -833,13 +838,14 @@ export function install(rt) {
           void rt.deliver({
             fromId: result.info.senderSessionId,
             toId: rt.selfOf(id),
-            text: result.text,
+            text: HANDED_BACK,
             role: result.info.role,
             exchangeId: result.info.exchangeId,
             replyTo: result.info.replyTo,
             work: result.info.work,
             ...(result.info.roomId ? { roomId: result.info.roomId } : {}),
             deferred: true,
+            handedBack: true,
           }).catch(error => rt.warn('ds-bot: handing back a result failed: %s', error))
         }
         const reason = event.data?.reason
@@ -954,12 +960,13 @@ export function install(rt) {
             fromId: request.info.senderSessionId,
             toId: rt.selfOf(id),
             sessionId: id,
-            text: request.text,
+            text: HANDED_BACK,
             role: request.info.role,
             exchangeId: request.info.exchangeId,
             ...(request.info.role === 'room' ? { roomId: request.info.roomId, askedBy: request.info.askedBy, note: 'you read this call during your last task; answer it now' } : {}),
             ...(request.info.senderRoomId ? { fromRoomId: request.info.senderRoomId } : {}),
             deferred: true,
+            handedBack: true,
           }).catch(error => rt.warn('ds-bot: deferred request delivery failed: %s', error))
         }
         break
