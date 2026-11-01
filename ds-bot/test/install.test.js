@@ -58,6 +58,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'tool delete_group',
     'tool post_to_group',
     'tool ask_user',
+    'tool void_question',
     // show_view is scoped per Bot agent, not a global registration.
 
     'tools guard',

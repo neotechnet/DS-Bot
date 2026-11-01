@@ -195,6 +195,11 @@ export function install(rt) {
         if (bot) throw closed(bot, 'turns')
         return
       }
+      case 'void_question': {
+        const bot = target(args.bot)
+        if (bot) throw closed(bot, 'questions')
+        return
+      }
       case 'attach_capability':
       case 'detach_capability': {
         const bot = target(args.bot)

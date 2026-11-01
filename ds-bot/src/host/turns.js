@@ -131,7 +131,7 @@ export function install(rt) {
   /** @type {Record<string, string>} */
   let activity = {}
   const activityOf = (tool) => {
-    if (/^(message_bot|stop_bot|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(tool)) return 'sending'
+    if (/^(message_bot|stop_bot|void_question|create_bot|update_bot|create_group|update_group|delete_group|post_to_group)$/.test(tool)) return 'sending'
     if (tool === 'group_relay') return 'orbit'
     if (/search|fetch|browse|browser|read|grep|glob|list/i.test(tool)) return 'searching'
     return 'working'
@@ -408,6 +408,7 @@ export function install(rt) {
         entry.joined = []
         entry.later = []
         entry.steeredAt = undefined
+        entry.card = state.questions[id]?.id
         if (entry.pending !== undefined) {
           claimTrigger(id, entry, entry.pending)
           entry.pending = undefined
@@ -561,6 +562,8 @@ export function install(rt) {
         entry.lastCalled = undefined
         const later = entry.later ?? []
         entry.later = []
+        const card = entry.card
+        entry.card = undefined
         for (const result of later) {
           void rt.deliver({
             fromId: result.info.senderSessionId,
@@ -586,6 +589,14 @@ export function install(rt) {
         const wroteCall = failure === undefined && reason?.kind === 'completed' && lastCalled !== true && writesToolCall(lastText)
         const retry = wroteCall && info?.retried !== true && !(info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))
         if (retry) void retryWrittenCall(id, info).catch(error => rt.warn('ds-bot: asking %s to run its written tool call failed: %s', id, error))
+        // A finished turn that asked nothing has moved on, so the card it left standing is
+        // stale. `card` is the card this turn opened on: a turn that asked has another id,
+        // or none here at all. A fresh part's handoff turn carries its card over; a failed
+        // or stopped turn said nothing about it.
+        if (card !== undefined && state.questions[id]?.id === card && reason?.kind === 'completed' && !retry && info?.handoff !== true) {
+          delete state.questions[id]
+          void rt.save().catch(() => {})
+        }
         const replyText = () => {
           const reply = (wroteCall ? texts.map(stripWrittenCalls) : texts).join('\n\n').trim()
           return wroteCall && reply === '' ? 'Tried to run a tool but wrote the call as text, so it did not run.' : reply
