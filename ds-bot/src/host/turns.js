@@ -540,6 +540,7 @@ export function install(rt) {
       case 'turn/end': {
         setActivity(id, undefined)
         const info = entry.info
+        const turn = entry.turn
         const joined = entry.joined ?? []
         // What the group already saw of the turn is not posted again.
         const texts = entry.texts.slice(entry.shown)
@@ -589,11 +590,13 @@ export function install(rt) {
         const wroteCall = failure === undefined && reason?.kind === 'completed' && lastCalled !== true && writesToolCall(lastText)
         const retry = wroteCall && info?.retried !== true && !(info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))
         if (retry) void retryWrittenCall(id, info).catch(error => rt.warn('ds-bot: asking %s to run its written tool call failed: %s', id, error))
-        // A finished turn that asked nothing has moved on, so the card it left standing is
-        // stale. `card` is the card this turn opened on: a turn that asked has another id,
-        // or none here at all. A fresh part's handoff turn carries its card over; a failed
-        // or stopped turn said nothing about it.
-        if (card !== undefined && state.questions[id]?.id === card && reason?.kind === 'completed' && !retry && info?.handoff !== true) {
+        // A finished turn the user could see that asked nothing has moved on, so the card
+        // it left standing is stale. `card` is the card this turn opened on: a turn that
+        // asked has another id, or none here at all. A hidden Bot-to-Bot turn shows the user
+        // nothing, so its card still waits for them. A fresh part's handoff turn carries its
+        // card over; a failed or stopped turn said nothing about it.
+        const hidden = (state.exchangeTurns[id] ?? []).includes(turn)
+        if (card !== undefined && state.questions[id]?.id === card && reason?.kind === 'completed' && !retry && !hidden && info?.handoff !== true) {
           delete state.questions[id]
           void rt.save().catch(() => {})
         }
