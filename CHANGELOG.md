@@ -4,6 +4,14 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Changed
+
+- A question card closes when its Bot finishes a later turn that asks nothing, so a stale card no longer stays on screen until you answer it. A click on a closed card is refused.
+
+### Added
+
+- `void_question` lets a Main Bot withdraw another Bot's open question card. The Bot is told, and a late click on the card is refused.
+
 ## [0.2.5] - 2026-11-01
 
 ### Changed
