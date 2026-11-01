@@ -350,7 +350,7 @@ test('replies a post waits for are work handed on: the answer to the Bot that as
   assert.match(posted, /your answer goes to Tester once all of it is back\.$/)
   host.finish('a', '已经让 Writer 去看了。')
   const waiting = (await host.call('state', {})).value
-  assert.deepEqual([waiting.activity.a, waiting.work.waiting], ['waiting', { a: { bots: [], rooms: ['r1'], for: ['c'] } }])
+  assert.deepEqual([waiting.activity.a, waiting.work.waiting], ['waiting', { a: { bots: [], rooms: ['r1'], for: ['c'] }, c: { bots: ['a'], rooms: [], for: [] } }])
   const done = host.round('c1', host.takePost())
   await settle(() => host.agentOf('gb').calls.length === 1)
   host.begin('gb')

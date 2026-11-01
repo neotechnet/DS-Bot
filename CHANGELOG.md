@@ -11,6 +11,7 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 ### Added
 
 - `void_question` lets a Main Bot withdraw another Bot's open question card. The Bot is told, and a late click on the card is refused.
+- A Bot that sends work from its own chat with `message_bot` now shows as waiting for the recipient until the reply arrives, on its tile and in its status.
 
 ## [0.2.5] - 2026-11-01
 

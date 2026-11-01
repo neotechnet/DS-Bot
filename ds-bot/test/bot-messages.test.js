@@ -170,7 +170,7 @@ test('a Bot busy in a group gets the message in its own chat, and the sender is 
   // A non-Main sender gets no stop_bot hint.
   emit('ga', 'turn/start', { turn: 1 })
   const back = await tool('message_bot', { to: 'Chief', message: 'done' }, 'b')
-  assert.equal(back, 'Delivered to Chief. Its reply will arrive later as a new message; do not wait for it. Chief now: working in group "Ops" for less than a minute. Your message does not reach its work in group "Ops".')
+  assert.equal(back, 'Delivered to Chief. Its reply will arrive later as a new message; do not wait for it. Chief now: working in group "Ops" for less than a minute; waiting for Writer to answer. Your message does not reach its work in group "Ops".')
 })
 
 test('a request steered into a running turn is recorded once and answered in a turn of its own', async (t) => {
@@ -575,7 +575,9 @@ test('a Bot\'s answer waits for the work it handed on, and carries what came bac
   const { agents, tool, call } = team
   const shown = async () => { const { value } = await call('state', {}); return [value.activity.b === 'waiting', value.work.waiting] }
   const { take, end, handed } = await handedOn(team)
-  assert.deepEqual(await shown(), [false, {}])
+  // Chief sent the work from its own chat, so it waits for Writer until the end.
+  const sent = { a: { bots: ['b'], rooms: [], for: [] } }
+  assert.deepEqual(await shown(), [false, sent])
   assert.match(handed, /When you have handed on everything, end your turn: each reply brings you back to this work, and your answer goes to Chief once all of it is back\.$/)
   end('b', 'handed it to Tester')
   // Nothing goes up yet; Writer waits, and the team can see it.
@@ -583,13 +585,13 @@ test('a Bot\'s answer waits for the work it handed on, and carries what came bac
   assert.deepEqual(Object.values(await worksIn(team)).map(work => [work.from, work.to, work.open.length, work.held]), [['a', 'b', 1, 'handed it to Tester'], ['b', 'c', 0, undefined]])
   assert.deepEqual(callsOf(agents, 'a'), [])
   // Its mark shows it waits, and its row whom for.
-  assert.deepEqual(await shown(), [true, { b: { bots: ['c'], rooms: [], for: ['a'] } }])
+  assert.deepEqual(await shown(), [true, { ...sent, b: { bots: ['c'], rooms: [], for: ['a'] } }])
 
   take('c')
   end('c', 'two things to fix')
   await settled(() => callsOf(agents, 'b').length === 2)
   const back = take('b')
-  assert.deepEqual(await shown(), [false, {}])
+  assert.deepEqual(await shown(), [false, sent])
   assert.equal(textOf(back.content), '[Reply from Tester · for the work Chief asked you for; your answer goes to Chief once everything you handed on is back]\ntwo things to fix')
   end('b', 'fixed both')
   await settled(() => callsOf(agents, 'a').length === 1)

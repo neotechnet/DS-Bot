@@ -258,8 +258,13 @@ export function install(rt) {
     .filter(([id, work]) => work.to !== undefined && work.open.length > 0 && !busy.has(id))
     .map(([id, work]) => ({ id, work, out: work.open.map(childId => works()[childId]).filter(Boolean) }))
   const busyWith = sessionIds => new Set(sessionIds.map(sessionId => rt.live.get(sessionId)).filter(entry => entry?.turn !== undefined).map(entry => workOf(entry.info)).filter(Boolean))
+  // What a Bot sent from outside any work, such as its chat with the user: nothing above
+  // these holds their wait, and the sender waits until the reply closes them.
+  const sentOnOwn = () => Object.values(works())
+    .filter(work => work.to !== undefined && works()[work.parent] === undefined && rt.botOf(work.from) !== undefined && rt.botOf(work.to) !== undefined)
 
-  // Per Bot, the Bots and groups it waits for, and the Bots it does that work for.
+  // Per Bot, the Bots and groups it waits for, and the Bots it does that work for. `for`
+  // stays empty for work a Bot sent on its own, which it does for the user.
   function waitingView() {
     const view = {}
     const add = (list, id) => { if (id !== undefined && !list.includes(id)) list.push(id) }
@@ -269,6 +274,7 @@ export function install(rt) {
       for (const child of out) add(child.room ? entry.rooms : entry.bots, child.room ?? child.to)
       add(entry.for, work.from)
     }
+    for (const work of sentOnOwn()) add((view[work.from] ??= { bots: [], rooms: [], for: [] }).bots, work.to)
     return view
   }
 
@@ -314,6 +320,8 @@ export function install(rt) {
       const on = [...new Set(out.map(child => (child.room ? `group "${rt.roomOf(child.room)?.name ?? 'a group'}"` : child.name ?? nameOf(child.to) ?? 'a teammate')))]
       lines.push(on.length > 0 ? `waiting for ${on.join(' and ')} to hand back work${forName}` : `about to go on with work${forName}, whose results came back`)
     }
+    const sent = [...new Set(sentOnOwn().filter(work => work.from === botId).map(work => nameOf(work.to)))]
+    if (sent.length > 0) lines.push(`waiting for ${sent.join(' and ')} to answer`)
     if (lines.length === 0) lines.push('idle')
     if (state.questions?.[chat] !== undefined) lines.push('a question card in its own chat waits for the user\'s answer')
     if (state.views?.[chat] !== undefined) lines.push('a view card in its own chat waits for the user\'s answer')
