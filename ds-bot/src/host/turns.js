@@ -369,8 +369,10 @@ export function install(rt) {
 
   // A group Session is hidden as a whole, so its turns need no marking. A handoff
   // package that only opens a part is acknowledged with a fixed line, also hidden.
-  const claimTrigger = (sessionId, entry, info) => {
+  const claimTrigger = (sessionId, entry, info, text) => {
     entry.info = info
+    // The trigger's text without its header line, for the card gate (card-gate.js).
+    entry.infoText = typeof text === 'string' ? text : undefined
     // A turn that was stopped for a part switch brings its joined requests along.
     if (Array.isArray(info.joined) && info.joined.length > 0) {
       entry.joined = info.joined.filter(item => item?.info !== undefined && item.info !== null)
@@ -599,7 +601,7 @@ export function install(rt) {
         if (entry.pending !== undefined) {
           claimedPending = entry.pending
           claimedPendingText = entry.pendingText
-          claimTrigger(id, entry, claimedPending)
+          claimTrigger(id, entry, claimedPending, claimedPendingText)
           entry.pending = undefined
           entry.pendingText = undefined
         }
@@ -696,7 +698,7 @@ export function install(rt) {
             entry.pending = source
             entry.pendingText = textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, '')
           }
-          else if (!opened) claimTrigger(id, entry, source)
+          else if (!opened) claimTrigger(id, entry, source, textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r\n]*\])/, ''))
           else if (source.work !== undefined && source.work !== rt.workOf?.(entry.info) && !expectsReply(source)) {
             // A result for other work than this turn's informs it, and comes back in a
             // turn of its own once this one ends, which goes on with that work.

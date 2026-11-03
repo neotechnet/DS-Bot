@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
+import { EXIT_PLAN_MODE, logGate, planTitle, refuseCard, refusePlan } from './card-gate.js'
 import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { within } from './folders.js'
 import { absoluteLinks } from './links.js'
@@ -680,6 +681,12 @@ export function install(rt) {
         .filter(option => option.label !== '')
         .slice(0, 6)
       if (options.length === 0) return 'Give at least one option.'
+      // A job another Bot sent is decided by that Bot, in its own chat (card-gate.js).
+      const refused = refuseCard(rt, id, options)
+      if (refused !== undefined) {
+        void logGate(rt, { bot: refused.bot, manager: refused.manager, tool: 'ask_user', title: String(args.question ?? '') })
+        return refused.text
+      }
       // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
       // composer dock, which takes questions without a call.
       const turn = rt.live.get(id)?.turn
@@ -927,6 +934,13 @@ Reason: ${why}` : ''}`
   ctx.tools.guard((exec) => {
     if (!rt.isBotSession(exec.agent?.id)) return undefined
     if (exec.name === BLOCKING_QUESTION_TOOL) return `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
+    if (exec.name === EXIT_PLAN_MODE) {
+      // A plan for a job another Bot sent is approved through that Bot (card-gate.js).
+      const refused = refusePlan(rt, exec.agent?.id)
+      if (refused === undefined) return undefined
+      void logGate(rt, { bot: refused.bot, manager: refused.manager, tool: EXIT_PLAN_MODE, title: planTitle(exec.arguments?.plan) })
+      return refused.text
+    }
     return DELEGATION_TOOLS.includes(exec.name) ? DELEGATION_REFUSAL : undefined
   })
   // Creation waits for this listener, so the Agent's first step already lacks the tool.

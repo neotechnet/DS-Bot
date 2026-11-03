@@ -65,7 +65,7 @@ test('a card asked in a hidden Bot-to-Bot turn goes to the dock, without its cal
   const { emit, ask, questions, stop } = await start()
   t.after(stop)
   emit('writer', 'turn/start', { turn: 1 })
-  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name. CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
   await ask('writer', 'call-1')
   const asked = (await questions()).writer
   assert.equal(asked.question, 'Which name?')
