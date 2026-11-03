@@ -700,6 +700,39 @@ export function install(rt) {
     },
   }))
 
+  rt.teamTools.push(defineTool({
+    name: 'void_question',
+    description: 'Main Bot only. Withdraw the question card another Bot left open for the user, when it no longer applies. The card leaves the screen, a late click on it is refused, and the Bot is told in a new turn.',
+    parameters: {
+      bot: { type: 'string', required: true, description: 'Exact Bot name from list_bots' },
+      reason: { type: 'string', description: 'Why it was voided; the Bot reads this' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const sender = callerBot(exec)
+      if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can void a question.')
+      const target = rt.findBot(args.bot)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      const chat = rt.chatOf(target.id)
+      const question = rt.own(state.questions, chat)
+      if (question === undefined) refuse(`${target.name} has no open question.`)
+      delete state.questions[chat]
+      await rt.save()
+      if (target.id === sender.id) return 'Your question is voided.'
+      const why = String(args.reason ?? '').trim()
+      const text = `Your question "${question.question}" is withdrawn, so no answer to it will reach you. Do not act on it.${why ? `
+Reason: ${why}` : ''}`
+      try {
+        await rt.deliver({ fromId: sender.id, toId: target.id, text, role: 'voided', ...callerRoom(exec) })
+      } catch (error) {
+        rt.warn('ds-bot: telling %s its question was voided failed: %s', target.name, error)
+        return `The question of ${target.name} is voided, but ${target.name} could not be told. Tell it with message_bot.`
+      }
+      return `The question of ${target.name} is voided and it has been told.`
+    },
+  }))
+
   // Scoped per Bot session, not global: another plugin's global show_view serves
   // the sessions ds-bot does not own, while this one shadows it inside them.
   rt.teamTools.push(defineTool({
