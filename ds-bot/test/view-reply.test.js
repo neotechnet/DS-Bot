@@ -133,10 +133,11 @@ test('show_view registers an interactive card, refuses a group and a display-onl
   assert.equal(typeof open.views['writer-now'].askedAt, 'number')
   assert.deepEqual(open.views['writer-now'].view, CHOICES)
 
-  // A hidden Bot-to-Bot turn keeps the card but not the call.
+  // A hidden Bot-to-Bot turn keeps the card but not the call (the job opts in to
+  // carding the user; without it the card gate sends the card to Chief).
   emit('writer-now', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
   emit('writer-now', 'turn/start', { turn: 2 })
-  emit('writer-now', 'user/message', { content: text('[Message from Chief]\nAsk them'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  emit('writer-now', 'user/message', { content: text('[Message from Chief]\nAsk them. CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
   const hidden = await show('writer-now', { title: 'Pick', view: CHOICES }, 'call-hidden')
   assert.equal(hidden.concluded, true)
   assert.equal((await team()).views['writer-now'].callId, undefined)

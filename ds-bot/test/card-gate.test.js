@@ -154,26 +154,44 @@ test('a request whose audience is the user cards as before', async (t) => {
   assert.equal(rt.state.questions.writer.question, 'Which name?')
 })
 
-test('the production approval card stays with the Bot that runs it', async (t) => {
-  const { rt, ask, fromBot, stop } = await start()
+test('a production approval card in a job another Bot sent goes back to the manager', async (t) => {
+  const { rt, ask, fromBot, log, stop } = await start()
   t.after(stop)
   fromBot('coder', 'chief', 'Merge PR 12 when Steve approves')
-  assert.match(await ask('coder', [{ label: 'deploy to production (Recommended)' }, { label: 'Hold' }]), /card is on screen/)
-  assert.ok(rt.state.questions.coder)
-  delete rt.state.questions.coder
-  fromBot('writer', 'chief', 'Ship it')
-  assert.match(await ask('writer', [{ label: 'Deploy to production' }, { label: 'Hold' }]), /card is on screen/)
-  // A look-alike label is not the approval.
+  const reply = await ask('coder', [{ label: 'deploy to production (Recommended)' }, { label: 'Hold' }])
+  assert.match(reply, /^This job came from Chief. A deploy approval never goes to Steve from here: send the deploy DECISION to Chief, naming the repo and the PR as #N./)
+  assert.match(reply, /Chief cards Steve and mints the approval; then run gh pr merge <n> --repo <owner\/name> alone\.$/)
+  assert.equal(rt.state.questions.coder, undefined)
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.tool, entry.allowed, entry.because, entry.label, entry.manager], ['ask_user', false, 'production-label', 'deploy to production (Recommended)', 'Chief'])
+  // CARD-IT-YOURSELF opens ordinary cards, never the production one.
+  fromBot('writer', 'chief', 'Ship it. CARD-IT-YOURSELF')
+  assert.match(await ask('writer', [{ label: 'Deploy to production' }, { label: 'Hold' }]), /^This job came from Chief. A deploy approval/)
+  assert.equal(rt.state.questions.writer, undefined)
+  // A look-alike label is an ordinary card: refused with the ordinary text.
   fromBot('writer', 'chief', 'Ship it again')
-  assert.match(await ask('writer', [{ label: 'deploy to production now' }, { label: 'Hold' }]), /^This job came from Chief/)
+  assert.match(await ask('writer', [{ label: 'deploy to production now' }, { label: 'Hold' }]), /^This job came from Chief. Do not card Steve/)
 })
 
-test('CARD-IT-YOURSELF in the job lets the Bot card the user', async (t) => {
-  const { rt, ask, fromBot, stop } = await start()
+test('the production approval card in a turn the user typed shows, and the log says why', async (t) => {
+  const { rt, ask, fromUser, log, stop } = await start()
+  t.after(stop)
+  fromUser('coder', 'Merge PR 12 when you are ready')
+  assert.match(await ask('coder', [{ label: 'deploy to production (Recommended)' }, { label: 'Hold' }]), /card is on screen/)
+  assert.ok(rt.state.questions.coder)
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.bot, entry.tool, entry.allowed, entry.because, entry.label], ['Coder', 'ask_user', true, 'not-bot-turn', 'deploy to production (Recommended)'])
+  assert.equal(entry.text, undefined)
+})
+
+test('CARD-IT-YOURSELF in the job lets the Bot card the user, and the log says so', async (t) => {
+  const { rt, ask, fromBot, log, stop } = await start()
   t.after(stop)
   fromBot('writer', 'chief', 'Ask the user for the name yourself. CARD-IT-YOURSELF')
   assert.match(await ask('writer'), /card is on screen/)
   assert.ok(rt.state.questions.writer)
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.bot, entry.manager, entry.allowed, entry.because, entry.title], ['Writer', 'Chief', true, 'card-it-yourself', 'Which name?'])
 })
 
 test('exit_plan_mode in a job another Bot sent is refused', async (t) => {
@@ -201,7 +219,7 @@ test('PLAN-APPROVED from a Main Bot turns plan mode off', async (t) => {
   assert.equal(planMode.active.coder, false)
   assert.equal(delivered.length, 1)
   const [entry] = await anyLines(log)
-  assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.outcome], ['Coder', 'Chief', 'plan-approved', 'committed'])
+  assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.outcome, entry.authority], ['Coder', 'Chief', 'plan-approved', 'committed', 'main'])
 })
 
 test('PLAN-APPROVED from a Bot that is not a Main Bot changes nothing', async (t) => {
@@ -243,7 +261,7 @@ test('an ORDER from a Bot that is not a Main Bot changes nothing and says why', 
   await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'ORDER from Writer · job j-2 · decisions come back to me', role: 'request' })
   assert.deepEqual(planMode.calls, [])
   const [entry] = await anyLines(log)
-  assert.deepEqual([entry.tool, entry.outcome], ['order', 'sender-not-main'])
+  assert.deepEqual([entry.tool, entry.outcome], ['order', 'sender-not-manager'])
 })
 
 test('ORDER mid-text is not an order', async (t) => {
@@ -407,4 +425,69 @@ test('DSH_PLAN_DEFAULT_OFF=off leaves plan mode alone', async (t) => {
   t.after(stop)
   await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
   assert.deepEqual(planMode.calls, [])
+})
+
+// --- 2026-11-03: card routing to the manager (dsbot-card-routing-overlord) ---
+
+const PICK = { type: 'options', id: 'pick', options: [{ label: 'A' }, { label: 'B' }] }
+const DEPLOY = { type: 'confirm', id: 'go', confirmLabel: 'deploy to production' }
+
+const showView = (rt, sessionId, args) => rt.teamTools.find(d => d.name === 'show_view').execute(args, { agent: { id: sessionId }, callId: 'view-1', concludeTurn() {} })
+
+test('an interactive show_view in a job another Bot sent is refused like ask_user', async (t) => {
+  const { rt, fromBot, log, stop } = await start()
+  t.after(stop)
+  fromBot('writer', 'chief', 'Pick a layout')
+  assert.match(await showView(rt, 'writer', { title: 'Layout', view: PICK }), /^This job came from Chief. Do not card Steve/)
+  assert.equal(rt.state.views?.writer, undefined)
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.allowed, entry.because, entry.title], ['Writer', 'Chief', 'show_view', false, 'gated', 'Layout'])
+  // A display-only view is no card and is not gated.
+  fromBot('writer', 'chief', 'Show the numbers')
+  assert.equal(await showView(rt, 'writer', { title: 'Meter', view: { type: 'metric', label: 'Done', value: '70%' } }), 'The view is on screen.')
+})
+
+test('a show_view whose confirm is the production approval is refused even with CARD-IT-YOURSELF', async (t) => {
+  const { rt, fromBot, stop } = await start()
+  t.after(stop)
+  fromBot('coder', 'chief', 'Ask Steve yourself. CARD-IT-YOURSELF')
+  assert.match(await showView(rt, 'coder', { title: 'Ship', view: DEPLOY }), /^This job came from Chief. A deploy approval never goes to Steve from here/)
+  assert.equal(rt.state.views?.coder, undefined)
+  // An ordinary interactive view is opened by the token.
+  assert.match(await showView(rt, 'coder', { title: 'Layout', view: PICK }), /view is on screen; the user's answer/)
+  assert.ok(rt.state.views.coder)
+})
+
+test('an interactive show_view in a turn the user typed shows as before', async (t) => {
+  const { rt, fromUser, stop } = await start()
+  t.after(stop)
+  fromUser('writer', 'Show me the layouts')
+  assert.match(await showView(rt, 'writer', { title: 'Layout', view: PICK }), /view is on screen; the user's answer/)
+  assert.ok(rt.state.views.writer)
+})
+
+const ADMIN_TEAM = { ...TEAM, rooms: { seo: { id: 'seo', name: 'SEO', members: ['writer', 'coder'], mode: 'admin', admin: 'writer', named: true, sessions: {} } } }
+
+test('PLAN-APPROVED from the admin of a group the Bot is in turns plan mode off', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode, team: ADMIN_TEAM })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'PLAN-APPROVED seo-1: go', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.outcome, entry.authority], ['Coder', 'Writer', 'plan-approved', 'committed', 'group-admin'])
+})
+
+test('a group admin cannot release a Bot outside its group, nor a plain member', async (t) => {
+  const planMode = fakePlanMode({ chief: true, writer: true })
+  const team = { ...ADMIN_TEAM, mainBotIds: ['chief'] }
+  const { rt, log, stop } = await start({ planMode, team })
+  t.after(stop)
+  // Chief is not in the SEO group: its admin is not Chief's manager.
+  await rt.deliver({ fromId: 'writer', toId: 'chief', text: 'PLAN-APPROVED x-1: go', role: 'request' })
+  // Coder is a member, not the admin: it cannot release the admin.
+  await rt.deliver({ fromId: 'coder', toId: 'writer', text: 'PLAN-APPROVED x-2: go', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  const lines = await anyLines(log)
+  assert.deepEqual(lines.map(line => line.outcome), ['sender-not-manager', 'sender-not-manager'])
 })
