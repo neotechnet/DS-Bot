@@ -12,6 +12,6 @@ Evidence folder: `C:\Projects\logs\2026-11-03-dsbot-027\`.
 | 2 | Gate loaded after restart | `card-gate.log` gate-loaded lines at 21:13:14.662Z and 21:39:25.029Z. | `C:\Users\SteveDempsey\.dsh\bot\logs\card-gate.log` |
 | 3 | void_question in the installed build | installed package.json 0.2.7; void_question in constants.js:67, tools.js:714, privacy.js:198, prompt.js:34, turns.js:283. | live profile `node_modules\ds-bot\src\host\` |
 | 4 | HANDED_BACK fires | PASS. Igor's session `session-bbf16cbd` seq 1479 at 2026-11-03T21:48:10.750Z: message from Eye In The Sky with `source.deferred=true, handedBack=true`, answered at seq 1480. First boot also fired at seq 1279, 21:29:10.580Z. | `phase4-handedback-pass.txt` (sha256 84826C04...91B4D6), `phase4-handedback-scan.txt` |
-| 5 | Screenshot of the running GUI | PID 47400 window, 1477x874. | `phase4-gui-2.png` sha256 B35B6B42...8E7E |
+| 5 | Screenshot of the running GUI | PASS. Full window 2584x1529 at DPI 168, captured DPI aware; chat text wraps inside its bubble. The earlier 1477x874 capture was DPI unaware and cropped to the top-left 57% (the vision SUSPECT "cut off at the right edge" was that crop). | `phase4-gui-3.png` sha256 A88ACDB9...46364F, `phase4-gui-3.json`; superseded `phase4-gui-2.png` |
 
 Note on #4: `chat-index.sqlite` lags the session logs (max row 21:22:14Z at read time), so an index-only read reports no hand-back after the restart. The pass comes from decoding the zstd session logs frame by frame (`tools\scan_handback.mjs`).
