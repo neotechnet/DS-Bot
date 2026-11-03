@@ -47,6 +47,7 @@ var ZH = {
   Working: "进行中",
   "Waiting for your answer": "等你回答",
   "Waiting for {names}": "等 {names} 交回",
+  "Waiting for a teammate": "等队友交回工作",
   "Unread activity": "有未读",
   "Not read yet": "未读",
   Search: "搜索",
@@ -1637,6 +1638,13 @@ function createSource(initial) {
 }
 var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, learning: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
 var isMainOf = (roster, id) => id !== void 0 && (roster.mainBotIds ?? []).includes(id);
+function ownedSessionIds(roster) {
+  return [...new Set([
+    ...roster.bots.flatMap((bot) => [bot.id, bot.sessionId ?? bot.id, ...bot.parts ?? []]),
+    ...roster.rooms.flatMap((room2) => [room2.id, room2.sessionId ?? room2.id, ...room2.ownParts ?? [], ...room2.parts ?? [], ...Object.values(room2.sessions ?? {})]),
+    ...Object.keys(roster.agentOf ?? {})
+  ].filter((id) => typeof id === "string" && id !== ""))];
+}
 function indexRoster(value) {
   const byId = {};
   for (const bot of value.bots) {
@@ -2528,11 +2536,11 @@ function useLinger(value, ms) {
 
 // src/client/styles.js
 var SHELL_CSS = `
-body{--bt-ink:#141414;--bt-danger:#e02135;--bt-ink-2:rgba(20,20,20,.6);--bt-ink-3:rgba(20,20,20,.36);--bt-bubble:#eeeeee;--bt-sidebar:#f7f7f7;--bt-main:#fcfcfc;--bt-line:rgba(20,20,20,.08);--bt-line-2:rgba(20,20,20,.15);--bt-line-weak:rgba(20,20,20,.1);--bt-hover:rgba(119,119,119,.09);--bt-active:rgba(119,119,119,.17);--bt-card:#ffffff;--bt-accent:#4d6bfe;--bt-green:#00c972;--bt-star:#ff9800;--bt-user:#070707;--bt-user-ink:#fcfcfc;--bt-tag-bg:rgba(20,20,20,.06);--bt-tag-ink:rgba(20,20,20,.56);--bt-knob:#ffffff;--bt-glass-bg:color-mix(in srgb,var(--bt-main) 78%,transparent);--bt-glass-border:rgba(255,255,255,.72);--bt-glass-rim:rgba(20,20,20,.09);--bt-glass-shadow:0 8px 28px -6px rgba(0,0,0,.08),0 2px 6px -1px rgba(0,0,0,.04),inset 0 1px 0 rgba(255,255,255,.82);-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--bt-font:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
+body{--bt-ink:#141414;--bt-danger:#e02135;--bt-ink-2:rgba(20,20,20,.6);--bt-ink-3:rgba(20,20,20,.36);--bt-bubble:#eeeeee;--bt-sidebar:#f7f7f7;--bt-main:#fcfcfc;--bt-line:rgba(20,20,20,.08);--bt-line-2:rgba(20,20,20,.15);--bt-line-weak:rgba(20,20,20,.1);--bt-hover:rgba(119,119,119,.09);--bt-active:rgba(119,119,119,.17);--bt-card:#ffffff;--bt-accent:#4d6bfe;--bt-green:#00c972;--bt-star:#ff9800;--bt-waiting:#5b6472;--bt-user:#070707;--bt-user-ink:#fcfcfc;--bt-tag-bg:rgba(20,20,20,.06);--bt-tag-ink:rgba(20,20,20,.56);--bt-knob:#ffffff;--bt-glass-bg:color-mix(in srgb,var(--bt-main) 78%,transparent);--bt-glass-border:rgba(255,255,255,.72);--bt-glass-rim:rgba(20,20,20,.09);--bt-glass-shadow:0 8px 28px -6px rgba(0,0,0,.08),0 2px 6px -1px rgba(0,0,0,.04),inset 0 1px 0 rgba(255,255,255,.82);-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--bt-font:var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
 /* iOS waits out a double-tap zoom on buttons; the plugin's own controls never zoom. */
 :is(.bt-tool,.bt-uaction,.bt-menu button,.bt-menu-item,.bt-icon-btn,.bt-round,.bt-pill,.bt-account,.bt-set-row,.bt-settings-item,.bt-react-strip button,.bt-palette-row,.bt-palette-clear,.bt-tab,.bt-ptab,.bt-ptab-x,.bt-bcard-x,.bt-plus,.bt-q-btn,.bt-q-x,.bt-x,.bt-nc-send,.bt-send,.bt-soft,.bt-mini,.bt-side-send,.bt-shape,.bt-swatch,.bt-color,.bt-newchat,.bt-task-day,.bt-task-remove,.bt-fb-btn){touch-action:manipulation}
 :is(.bt-round,.bt-you,.bt-account,.bt-color,.bt-color span,.bt-swatch,.bt-icon-btn,.bt-avatar-trigger,.bt-avatar-pencil,.bt-plus,.bt-mic,.bt-voice){corner-shape:round}
-body[data-ds-dark-theme]{--bt-ink:#f2f2f2;--bt-ink-2:rgba(242,242,242,.6);--bt-ink-3:rgba(242,242,242,.36);--bt-bubble:#262626;--bt-sidebar:#1b1b1b;--bt-main:#141414;--bt-line:rgba(255,255,255,.08);--bt-line-2:rgba(255,255,255,.15);--bt-line-weak:rgba(255,255,255,.1);--bt-hover:rgba(160,160,160,.12);--bt-active:rgba(160,160,160,.2);--bt-card:#1f1f1f;--bt-user:#f2f2f2;--bt-user-ink:#141414;--bt-tag-bg:rgba(255,255,255,.09);--bt-tag-ink:rgba(242,242,242,.62);--bt-glass-bg:color-mix(in srgb,var(--bt-main) 74%,transparent);--bt-glass-border:rgba(255,255,255,.13);--bt-glass-rim:rgba(255,255,255,.11);--bt-glass-shadow:0 12px 32px -6px rgba(0,0,0,.42),0 2px 8px -1px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.12)}
+body[data-ds-dark-theme]{--bt-ink:#f2f2f2;--bt-ink-2:rgba(242,242,242,.6);--bt-ink-3:rgba(242,242,242,.36);--bt-bubble:#262626;--bt-sidebar:#1b1b1b;--bt-main:#141414;--bt-line:rgba(255,255,255,.08);--bt-line-2:rgba(255,255,255,.15);--bt-line-weak:rgba(255,255,255,.1);--bt-hover:rgba(160,160,160,.12);--bt-active:rgba(160,160,160,.2);--bt-card:#1f1f1f;--bt-user:#f2f2f2;--bt-user-ink:#141414;--bt-tag-bg:rgba(255,255,255,.09);--bt-tag-ink:rgba(242,242,242,.62);--bt-waiting:#9aa3b2;--bt-glass-bg:color-mix(in srgb,var(--bt-main) 74%,transparent);--bt-glass-border:rgba(255,255,255,.13);--bt-glass-rim:rgba(255,255,255,.11);--bt-glass-shadow:0 12px 32px -6px rgba(0,0,0,.42),0 2px 8px -1px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.12)}
 ${Object.entries(INKS).map(([name, [light]]) => `body{--bt-ink-${name}:${light}}`).join("")}
 ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-ink-${name}:${dark}}`).join("")}
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
@@ -2623,6 +2631,14 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-badge-main path{fill:var(--bt-star);stroke:var(--bt-sidebar);stroke-width:2.6;stroke-linejoin:round;paint-order:stroke}
 .bt-badge-alert{background:color-mix(in srgb,var(--bt-accent) 78%,var(--bt-sidebar));color:var(--bt-accent-ink,#fff);font-size:8.5px;line-height:12px;font-weight:600;font-family:var(--bt-font)}
 .bt-badge-working{background:color-mix(in srgb,var(--bt-green) 82%,var(--bt-sidebar));width:8px;height:8px;right:1px;bottom:1px}
+/* local: waiting-mark. A Bot whose own turn is over but whose handed-on work has not
+   come back cannot wear the working badge, and a Main Bot's star takes the one badge
+   slot, so the wait gets a slot of its own opposite the star. */
+.bt-badge-waiting{right:auto;left:0;background:color-mix(in srgb,var(--bt-waiting) 90%,var(--bt-sidebar))}
+.bt-badge-waiting svg{width:9px;height:9px}
+.bt-badge-waiting :is(circle,path){fill:none;stroke:var(--bt-sidebar);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+body:not([data-bt-motion=quiet]) .bt-badge-waiting{animation:bt-wait-tick 2.4s ease-in-out infinite}
+@keyframes bt-wait-tick{0%,100%{opacity:1}50%{opacity:.4}}
 .bt-cluster{position:relative;display:inline-block;flex:none;line-height:0}
 .bt-cluster>*{position:absolute}
 .bt-cluster-more,.bt-cluster-you{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--bt-active);color:var(--bt-ink-3);font-family:var(--bt-font);font-weight:500;line-height:1;font-variant-numeric:tabular-nums}
@@ -2645,6 +2661,10 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-track{background:transparent}
 .bt-side:not(.bt-rail)>.bt-list::-webkit-scrollbar-thumb{border:4px solid transparent;border-radius:6px;background:color-mix(in srgb,var(--bt-ink) 16%,transparent) padding-box}
 .bt-side:not(.bt-rail)>.bt-list:hover::-webkit-scrollbar-thumb{background-color:color-mix(in srgb,var(--bt-ink) 30%,transparent)}
+/* local: sidebar-coexistence. Every Main Bot tiles, two to a row. */
+.bt-tile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));justify-items:center;align-self:stretch;padding:8px 0 2px}
+.bt-tile-grid>.bt-tile-wrap{padding:6px 0}
+.bt-tile-grid .bt-tile{width:100%;max-width:112px}
 .bt-tile-wrap{display:flex;justify-content:center;padding:20px 0 15px}
 .bt-tile{display:flex;flex-direction:column;align-items:center;gap:4px;width:95px;padding:6px 8px 4px;border-radius:16px;border:0;background:transparent;color:var(--bt-ink);cursor:pointer;font-family:inherit;transition:background-color .12s ease}
 .bt-tile:hover{background:var(--bt-hover)}
@@ -2672,6 +2692,10 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-leftcol{position:fixed;left:0;top:0;bottom:0;z-index:25;display:flex;--bt-lc-clear:var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px));background:var(--bt-leftcol-fill,var(--bt-sidebar));border-right:.5px solid var(--bt-line);box-sizing:border-box;padding:calc(var(--bt-lc-clear) + 6px) 12px 6px;color:var(--bt-ink);font-family:var(--bt-font)}
 html[data-windows-titlebar] .bt-leftcol,html[data-platform=darwin] .bt-leftcol{border-right:none}
 .bt-leftcol{animation:bt-leftcol-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
+/* local: sidebar-coexistence. The column sits in the shell's own sidebar, which owns
+   the place, the fill, the width, the resize and the slide. */
+.bt-leftcol{position:relative;left:auto;top:auto;bottom:auto;z-index:auto;flex-direction:column;min-height:0;--bt-lc-clear:0px;background:none;border-right:none;padding:0;animation:none}
+.bt-leftcol>.bt-leftcol-grip{display:none}
 .bt-leftcol[data-leaving]{transform:translateX(-100%);transition:transform ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing};pointer-events:none}
 @keyframes bt-leftcol-in{from{transform:translateX(-100%)}}
 @media (prefers-reduced-motion:reduce){.bt-leftcol{animation:none}.bt-leftcol[data-leaving],[class*="_centerCol"]{transition:none}}
@@ -2680,7 +2704,7 @@ html[data-windows-titlebar] .bt-leftcol,html[data-platform=darwin] .bt-leftcol{b
 /* The shell's collapsed sidebar keeps no track in the Bot view, so a hidden
    column leaves nothing behind (the shell's right column, when open, keeps its
    own geometry). Our own collapse of it lands without the shell's slide. */
-[class*="_frame"][data-sidebar-collapsed][data-rightbar-collapsed]:has(>[class*="_sidebarCol"]){grid-template-columns:0px minmax(0,1fr) 0px!important}
+/* local: sidebar-coexistence. The shell keeps its own tracks while the Bot list sits inside them. */
 html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transition:none!important}
 .bt-leftcol[data-left=drawer]{background:var(--bt-sidebar);box-shadow:8px 0 24px rgba(0,0,0,.14)}
 .bt-leftcol>.bt-side{width:100%}
@@ -3913,6 +3937,14 @@ function MainStar() {
     (0, import_react2.createElement)("path", { d: "M10 2.4l2.29 5.04 5.51.63-4.09 3.74 1.11 5.42L10 14.5l-4.82 2.73 1.11-5.42L2.2 8.07l5.51-.63z" })
   );
 }
+function WaitIcon({ size = 9 }) {
+  return (0, import_react2.createElement)(
+    "svg",
+    { viewBox: "0 0 10 10", width: size, height: size, "aria-hidden": true },
+    (0, import_react2.createElement)("circle", { cx: 5, cy: 5, r: 3.45 }),
+    (0, import_react2.createElement)("path", { d: "M5 2.75v2.4l1.75 .95" })
+  );
+}
 function useSettled(state) {
   const prev = (0, import_react2.useRef)(state);
   const [settled, setSettled] = (0, import_react2.useState)(false);
@@ -3941,7 +3973,8 @@ function BotAvatar({ bot, size, state = "idle", main, admin, badge = true, live 
     badgeKind === "working" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-working", "aria-label": t("Working"), role: "img" }) : null,
     badgeKind === "alert" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-alert", "aria-label": t("Waiting for your answer"), role: "img" }, "?") : null,
     badgeKind === "admin" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-admin", "aria-label": t("Admin"), role: "img" }, (0, import_react2.createElement)(StarIcon)) : null,
-    badgeKind === "main" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-main", "aria-label": t("Main Bot"), role: "img" }, (0, import_react2.createElement)(MainStar)) : null
+    badgeKind === "main" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-main", "aria-label": t("Main Bot"), role: "img" }, (0, import_react2.createElement)(MainStar)) : null,
+    badge && state === "waiting" ? (0, import_react2.createElement)("span", { className: "bt-badge bt-badge-waiting", role: "img", "aria-label": t("Waiting for a teammate") }, (0, import_react2.createElement)(WaitIcon)) : null
   );
 }
 function clusterSeats(count, frame) {
@@ -10067,7 +10100,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const main = isMainOf(roster, id);
-  const tile = roster.mainBotId === id;
+  const tile = main || roster.mainBotId === id;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
@@ -10331,13 +10364,13 @@ function useListGlide(listRef, layout, key) {
     tops.current = { layout, map: next };
   }, [layout, key]);
 }
-function LeftColumn({ mode, width, onGrip, leaving, children }) {
-  return (0, import_react_dom3.createPortal)((0, import_react21.createElement)(
+function LeftColumn({ mode, onGrip, leaving, children }) {
+  return (0, import_react21.createElement)(
     "div",
-    { className: "bt-leftcol", "data-left": mode, "data-leaving": leaving || void 0, "aria-hidden": leaving || void 0, style: { width: `${width}px` } },
+    { className: "bt-leftcol", "data-left": mode, "data-leaving": leaving || void 0, "aria-hidden": leaving || void 0 },
     children,
     (0, import_react21.createElement)("div", { className: "bt-leftcol-grip", role: "separator", "aria-orientation": "vertical", "aria-label": t("Resize sidebar"), title: t("Resize sidebar"), onPointerDown: onGrip })
-  ), document.body);
+  );
 }
 function TitleToggle({ hidden, onToggle }) {
   if (typeof document === "undefined") return null;
@@ -10385,7 +10418,7 @@ function TeamSidebar(props) {
   const order = (0, import_react21.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...roster.bots.filter((bot) => !isMainOf(roster, bot.id) && bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
@@ -10393,15 +10426,15 @@ function TeamSidebar(props) {
     return entries2.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at);
   }, [roster, updated]);
   const main = roster.byId[roster.mainBotId];
+  const tileBots = [main, ...(roster.mainBotIds ?? []).map((id) => roster.byId[id])].filter((bot, index, all) => bot !== void 0 && all.findIndex((other) => other?.id === bot.id) === index);
   useListGlide(listRef, wideContent, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
   useReportReady(roster.ready, roster);
   const openWidth = drag?.width ?? frameSnap.sidebarWidth;
-  const ourWidth = shown === "rail" ? RAIL_WIDTH : openWidth;
   const pushed = mode === "open" ? openWidth : mode === "hidden" ? 0 : RAIL_WIDTH;
   (0, import_react21.useLayoutEffect)(() => {
     if (typeof document === "undefined") return;
-    chatRoom.setLeft(Math.max(0, pushed - (frameSnap.collapsedWidth ?? 0)));
+    chatRoom.setLeft(null);
   }, [pushed, frameSnap.collapsedWidth]);
   (0, import_react21.useEffect)(() => () => {
     if (typeof document !== "undefined") chatRoom.setLeft(null);
@@ -10530,7 +10563,6 @@ function TeamSidebar(props) {
     if (requested.current) return void 0;
     requested.current = true;
     quiet(true);
-    actions.toggleSidebar();
     clearTimeout(requestLapse.current);
     requestLapse.current = setTimeout(() => {
       requested.current = false;
@@ -10576,7 +10608,7 @@ function TeamSidebar(props) {
     event.preventDefault();
     actions.openPalette(event.key);
   };
-  const onToggle = () => actions.toggleLeftHidden?.();
+  const onToggle = () => (actions.toggleSidebar ?? actions.toggleLeftHidden)?.();
   const toggleRef = (0, import_react21.useRef)(onToggle);
   toggleRef.current = onToggle;
   (0, import_react21.useEffect)(() => {
@@ -10607,11 +10639,12 @@ function TeamSidebar(props) {
     main ? (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")),
     (0, import_react21.createElement)("span", { className: "bt-rail-sep", "aria-hidden": true })
   );
-  const foot = wideContent ? (0, import_react21.createElement)("div", { className: "bt-leftcol-foot" }, (0, import_react21.createElement)(AccountLauncher, { seat: false, actions })) : (0, import_react21.createElement)(
+  const seated = uiNow.accountSeated === true;
+  const foot = wideContent ? seated ? null : (0, import_react21.createElement)("div", { className: "bt-leftcol-foot" }, (0, import_react21.createElement)(AccountLauncher, { seat: false, actions })) : (0, import_react21.createElement)(
     "div",
     { className: "bt-leftcol-foot bt-leftcol-foot-rail" },
     (0, import_react21.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("New…"), title: t("New…"), onClick: () => actions.openNewChat("new") }, (0, import_react21.createElement)(PlusIcon)),
-    (0, import_react21.createElement)(AccountLauncher, { seat: false, actions })
+    seated ? null : (0, import_react21.createElement)(AccountLauncher, { seat: false, actions })
   );
   const content = (0, import_react21.createElement)(
     "div",
@@ -10621,7 +10654,7 @@ function TeamSidebar(props) {
     (0, import_react21.createElement)(
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
-      wideContent ? main ? (0, import_react21.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
+      wideContent ? tileBots.length > 0 ? (0, import_react21.createElement)("div", { className: "bt-tile-grid" }, tileBots.map((bot) => (0, import_react21.createElement)(BotRow, { key: bot.id, ...rowProps, bot, marked: markedUnread[bot.id] === true }))) : roster.ready ? null : (0, import_react21.createElement)("div", { className: "bt-hint" }, uiNow.bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
       order.map((entry) => entry.kind === "bot" ? (0, import_react21.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react21.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react21.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     ),
     foot
@@ -10630,7 +10663,7 @@ function TeamSidebar(props) {
     import_react21.Fragment,
     null,
     (0, import_react21.createElement)(TitleToggle, { hidden: mode === "hidden", onToggle }),
-    shown === "hidden" ? null : (0, import_react21.createElement)(LeftColumn, { mode: shown, width: ourWidth, onGrip: startDrag, leaving }, content)
+    shown === "hidden" ? null : (0, import_react21.createElement)(LeftColumn, { mode: shown, onGrip: startDrag, leaving }, content)
   );
 }
 function UpdateButton({ useUpdate, actions }) {
@@ -11064,7 +11097,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
   const lastBot = (0, import_react21.useRef)(null);
   (0, import_react21.useEffect)(() => {
     if (!roster.ready || !roster.mainBotId) return void 0;
-    const [id, blank3] = mainView.split("|");
+    const [id] = mainView.split("|");
     const bot = id === "" ? void 0 : roster.byId[id];
     if (bot !== void 0) {
       lastBot.current = { botId: bot.id, sessionId: id };
@@ -11077,7 +11110,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
       if ((room2.sessionId ?? room2.id) !== id) actions.openSession(room2.id);
       return void 0;
     }
-    if (id !== "" && ((actions.isAgentSession?.(id) ?? roster.agentOf[id] !== void 0) || blank3 !== "1")) {
+    if (id !== "") {
       lastBot.current = null;
       return void 0;
     }
@@ -21863,6 +21896,20 @@ function apply(ctx) {
     savedPrefs = {};
   }
   const roster = createSource({ ...EMPTY_ROSTER, prefs: savedPrefs });
+  ctx.effect(() => {
+    const publish2 = () => {
+      const ids = ownedSessionIds(roster.getSnapshot());
+      window.__dshBotSessions = ids;
+      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: ids }));
+    };
+    const off = roster.subscribe(publish2);
+    publish2();
+    return () => {
+      off();
+      window.__dshBotSessions = [];
+      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: [] }));
+    };
+  }, "ds-bot: publish owned sessions");
   const unreadStore = sharedMap(STORAGE.unread);
   const reactionStore = sharedMap(STORAGE.reactions);
   const seenStore = sharedMap(STORAGE.seen);
@@ -22769,7 +22816,9 @@ function apply(ctx) {
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot();
       const main = Object.values(list.byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id;
-      const plain = isAgentSessionId(main);
+      const snap = roster.getSnapshot();
+      const unowned = main !== void 0 && !ownedSessionIds(snap).includes(main);
+      const plain = isAgentSessionId(main) || snap.ready && unowned;
       setPlain(plain);
       if (plain) dropPanels();
       if (main === previous) return;

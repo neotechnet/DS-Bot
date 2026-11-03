@@ -334,11 +334,46 @@ test('what the team view replaces in the shell sidebar stays out of sight', () =
   }
 })
 
-// The shell's collapsed sidebar keeps no track in the Bot view, so a hidden
-// column leaves nothing behind; the shell's right column keeps its own geometry.
-test('the shell\'s collapsed sidebar keeps no track while its right column is closed', () => {
-  const frame = [...rulesOf(SHELL_CSS), ...rulesOf(SIDEBAR_CSS)].find(rule => rule.selector.includes('[data-sidebar-collapsed][data-rightbar-collapsed]'))
-  assert.match(frame?.body ?? '', /grid-template-columns:0px/)
+// local: sidebar-coexistence. The Bot list sits inside the shell's own sidebar column,
+// so the shell keeps its own tracks: nothing zeroes them, the column is not drawn over
+// the page, and its edge grip gives way to the shell's own resizer.
+test('the Bot list sits in the shell\'s sidebar and leaves the shell its own tracks', () => {
+  const all = [...rulesOf(SHELL_CSS), ...rulesOf(SIDEBAR_CSS)]
+  assert.equal(all.some(rule => rule.selector.includes('[data-sidebar-collapsed][data-rightbar-collapsed]') && /grid-template-columns/.test(rule.body)), false)
+  const last = selector => all.filter(rule => rule.selector === selector).map(rule => rule.body).pop() ?? ''
+  assert.match(last('.bt-leftcol'), /(^|;)position:relative/)
+  assert.match(last('.bt-leftcol'), /(^|;)animation:none/)
+  assert.match(last('.bt-leftcol>.bt-leftcol-grip'), /(^|;)display:none/)
+})
+
+test('every Main Bot tiles at the top of the list, and a seated account is not drawn twice', () => {
+  viewport.innerWidth = 1280
+  const chief = { id: 'chief', name: 'Chief', createdAt: 1 }
+  const igor = { id: 'igor', name: 'Igor', createdAt: 2 }
+  const writer = { id: 'writer', name: 'Writer', createdAt: 3 }
+  const roster = { bots: [chief, igor, writer], rooms: [], agents: [], byId: { chief, igor, writer }, mainBotId: 'chief', mainBotIds: ['chief', 'igor'], ready: true }
+  const find = (node, match, out = []) => {
+    if (Array.isArray(node)) { node.forEach(child => find(child, match, out)); return out }
+    if (!node || typeof node !== 'object') return out
+    if (match(node)) out.push(node)
+    find(node.props?.children, match, out)
+    return out
+  }
+  const render = seated => TeamSidebar({
+    wide: true, actions: { toggleSidebar() {} },
+    useRoster: pick => pick(roster), useUi: pick => pick({ unread: {}, accountSeated: seated }), useRegistry: pick => pick({}),
+    useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
+  })
+  const tree = render(false)
+  const [grid] = find(tree, node => node.props?.className === 'bt-tile-grid')
+  assert.deepEqual(find(grid, node => node.type?.name === 'BotRow').map(row => row.props.bot.id), ['chief', 'igor'])
+  // The other Main Bot is not listed a second time among the rows below.
+  assert.deepEqual(find(tree, node => node.type?.name === 'BotRow').map(row => row.props.bot.id), ['chief', 'igor', 'writer'])
+  assert.equal(find(tree, node => node.type?.name === 'AccountLauncher').length, 1)
+  assert.equal(find(render(true), node => node.type?.name === 'AccountLauncher').length, 0)
+  // The column renders in place, not portalled onto <body>.
+  const [column] = find(tree, node => node.type?.name === 'LeftColumn')
+  assert.equal(column.props.width, undefined)
 })
 
 test('the column\'s top row hides it, on the rail too, and its edge is a drag grip', () => {
@@ -350,7 +385,8 @@ test('the column\'s top row hides it, on the rail too, and its edge is a drag gr
     useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
     useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
     useSidebarPref: pick => pick(pref),
-    actions: { toggleLeftHidden: () => calls.push('toggle'), toggleSidebar: () => {} },
+    // local: sidebar-coexistence. The shell's own switch hides the column that holds the list.
+    actions: { toggleLeftHidden: () => calls.push('own'), toggleSidebar: () => calls.push('toggle') },
   })
   const find = (node, match) => {
     if (Array.isArray(node)) return node.map(child => find(child, match)).find(Boolean)
@@ -510,7 +546,8 @@ test('a drag that ends on the rail leaves the column at the rail width', async (
     release(100)
     await settle(800)
     assert.equal(leftColumn().mode, 'rail')
-    assert.equal(leftColumn().width, 88)
+    // local: sidebar-coexistence. The shell's column owns the width; none is passed in.
+    assert.equal(leftColumn().width, undefined)
     assert.equal(column.style.width, '88px')
     assert.equal(column.hasAttribute('data-folding'), false)
   })
@@ -522,7 +559,7 @@ test('a reduced-motion drag that unfolds the rail lands at the dragged width', a
     for (const x of [120, 160, 200, 260, 330]) move(x)
     release(330)
     assert.equal(leftColumn().mode, 'open')
-    assert.equal(leftColumn().width, 330)
+    assert.equal(leftColumn().width, undefined)
     assert.equal(column.style.width, '330px')
     assert.equal(column.hasAttribute('data-folding'), false)
   })
@@ -544,7 +581,7 @@ test('after a snap the spring stops and the drag follows the cursor', async () =
     }
     release(330)
     await settle(800)
-    assert.equal(leftColumn().width, 330)
+    assert.equal(leftColumn().width, undefined)
     assert.equal(column.style.width, '330px')
   })
 })

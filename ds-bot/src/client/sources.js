@@ -20,6 +20,17 @@ export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bot
 // Any Main Bot holds the Main Bot powers; `mainBotId`, the first one, is the sidebar tile.
 export const isMainOf = (roster, id) => id !== undefined && (roster.mainBotIds ?? []).includes(id)
 
+// local: sidebar-coexistence. Every Session the team owns: Bot chats and their parts,
+// group Sessions with their parts and each member's Session there, and the Sessions of
+// DSH Agents. The shell keeps these out of its own sections.
+export function ownedSessionIds(roster) {
+  return [...new Set([
+    ...roster.bots.flatMap(bot => [bot.id, bot.sessionId ?? bot.id, ...(bot.parts ?? [])]),
+    ...roster.rooms.flatMap(room => [room.id, room.sessionId ?? room.id, ...(room.ownParts ?? []), ...(room.parts ?? []), ...Object.values(room.sessions ?? {})]),
+    ...Object.keys(roster.agentOf ?? {}),
+  ].filter(id => typeof id === 'string' && id !== ''))]
+}
+
 // A Bot's chat is a chain of Sessions ("parts"): the Bot id is its first part's id
 // and `sessionId` its current one. Every part id finds the Bot; Session state
 // (running, unread, turns) is read from the current part, team state from the Bot id.

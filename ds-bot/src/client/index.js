@@ -1,7 +1,7 @@
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
-import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
+import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
@@ -61,6 +61,23 @@ export function apply(ctx) {
   let savedPrefs = {}
   try { savedPrefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') ?? {} } catch { savedPrefs = {} }
   const roster = createSource({ ...EMPTY_ROSTER, prefs: savedPrefs })
+  // local: sidebar-coexistence. The shell files every Session it lists; the ones this
+  // plugin owns (Bot chats and parts, group Sessions, Agent Sessions) are published
+  // here so the shell can keep them out of its own sections.
+  ctx.effect(() => {
+    const publish = () => {
+      const ids = ownedSessionIds(roster.getSnapshot())
+      window.__dshBotSessions = ids
+      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: ids }))
+    }
+    const off = roster.subscribe(publish)
+    publish()
+    return () => {
+      off()
+      window.__dshBotSessions = []
+      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: [] }))
+    }
+  }, 'ds-bot: publish owned sessions')
   const unreadStore = sharedMap(STORAGE.unread)
   const reactionStore = sharedMap(STORAGE.reactions)
   // When each conversation was last left; a visit compares new turns against it.
@@ -1015,7 +1032,11 @@ export function apply(ctx) {
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot()
       const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-      const plain = isAgentSessionId(main)
+      // local: sidebar-coexistence. A Session the roster does not own was opened from the
+      // shell's own sections, so it shows as the native dsh page.
+      const snap = roster.getSnapshot()
+      const unowned = main !== undefined && !ownedSessionIds(snap).includes(main)
+      const plain = isAgentSessionId(main) || (snap.ready && unowned)
       setPlain(plain)
       if (plain) dropPanels()
       if (main === previous) return
