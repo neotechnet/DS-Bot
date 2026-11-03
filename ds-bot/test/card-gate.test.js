@@ -39,10 +39,21 @@ function fakePlanMode(active = {}) {
   }
 }
 
-async function start({ planMode } = {}) {
+// `realm: 'preset'` serves plan mode the way DSH does under an agent preset: only
+// through agentPresets.serviceFor, never from a Host-realm ctx.get('planMode').
+// `planDefault: true` keeps the start-off rule on; the relay tests turn it off so
+// they see only the relay.
+async function start({ planMode, team = TEAM, realm = 'host', planDefault = false, keep } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-card-gate-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
-  const ctx = fakeContext({ services: planMode ? { planMode } : {} })
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
+  if (keep !== undefined) writeFileSync(join(home, 'plan-mode-keep.json'), JSON.stringify(keep))
+  const beforeDefault = process.env.DSH_PLAN_DEFAULT_OFF
+  if (!planDefault) process.env.DSH_PLAN_DEFAULT_OFF = 'off'
+  else delete process.env.DSH_PLAN_DEFAULT_OFF
+  const services = planMode === undefined ? {}
+    : realm === 'preset' ? { agentPresets: { list: async () => [], serviceFor: (_agent, name) => (name === 'planMode' ? planMode : undefined) } }
+    : { planMode }
+  const ctx = fakeContext({ services })
   const delivered = []
   Object.assign(ctx, {
     workspaceRegistry: { get: () => undefined, resolveByPath: async () => undefined, create: async path => ({ id: 'w1', path }), archiveSession: async () => {} },
@@ -87,14 +98,20 @@ async function start({ planMode } = {}) {
     nextTurn(sessionId)
     emit(sessionId, 'user/message', { content: [{ type: 'text', text: body }], source: { kind: 'user' } })
   }
-  const log = async () => {
+  // Every line, start-up included (`all`), or only the gate's decisions.
+  const log = async ({ all = false } = {}) => {
     const path = join(home, 'logs', 'card-gate.log')
     for (let i = 0; i < 50 && !existsSync(path); i++) await new Promise(resolve => setTimeout(resolve, 10))
     await new Promise(resolve => setTimeout(resolve, 20))
-    return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : []
+    const lines = existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : []
+    return all ? lines : lines.filter(line => line.tool !== 'gate-loaded')
   }
   await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'chief' } })
-  return { rt, emit, ask, guard, fromBot, fromUser, log, delivered, stop: async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) } }
+  const restoreDefault = () => {
+    if (beforeDefault === undefined) delete process.env.DSH_PLAN_DEFAULT_OFF
+    else process.env.DSH_PLAN_DEFAULT_OFF = beforeDefault
+  }
+  return { rt, home, emit, ask, guard, fromBot, fromUser, log, delivered, stop: async () => { await ctx.dispose(); restoreDefault(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) } }
 }
 
 test('ask_user in a job another Bot sent is refused and names the manager', async (t) => {
@@ -105,7 +122,7 @@ test('ask_user in a job another Bot sent is refused and names the manager', asyn
   assert.match(reply, /^This job came from Chief\. Do not card Steve: end your turn with a DECISION block for Chief/)
   assert.match(reply, /Chief cards Steve and relays his answer\.$/)
   assert.equal(rt.state.questions.writer, undefined)
-  const [entry] = await log()
+  const [entry] = await anyLines(log)
   assert.equal(entry.bot, 'Writer')
   assert.equal(entry.manager, 'Chief')
   assert.equal(entry.tool, 'ask_user')
@@ -166,7 +183,7 @@ test('exit_plan_mode in a job another Bot sent is refused', async (t) => {
   const refusal = guard('coder', 'exit_plan_mode', { plan: '# Card gate\n\nSteps' })
   assert.match(refusal, /^This job came from Chief\. Do not open a plan review for Steve here: send the full plan to Chief as a DECISION \(Approve plan \(Recommended\) \/ Change it \/ Hold\)\./)
   assert.match(refusal, /When Chief relays approval with PLAN-APPROVED, plan mode turns off for you\.$/)
-  const [entry] = await log()
+  const [entry] = await anyLines(log)
   assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.title], ['Coder', 'Chief', 'exit_plan_mode', 'Card gate'])
   // In the user's own turn, and in a Main Bot's, the review goes ahead.
   fromUser('coder', 'Plan the card gate')
@@ -183,7 +200,7 @@ test('PLAN-APPROVED from a Main Bot turns plan mode off', async (t) => {
   assert.deepEqual(planMode.calls, [['coder', false]])
   assert.equal(planMode.active.coder, false)
   assert.equal(delivered.length, 1)
-  const [entry] = await log()
+  const [entry] = await anyLines(log)
   assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.outcome], ['Coder', 'Chief', 'plan-approved', 'committed'])
 })
 
@@ -198,6 +215,78 @@ test('PLAN-APPROVED from a Bot that is not a Main Bot changes nothing', async (t
   await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'Plan looks fine', role: 'request' })
   await rt.deliver({ fromId: 'chief', toId: 'writer', text: 'PLAN-APPROVED', role: 'request' })
   assert.deepEqual(planMode.calls, [])
+})
+
+test('PLAN-APPROVED from a Main Bot turns plan mode off for another Main Bot', async (t) => {
+  const planMode = fakePlanMode({ chief: true })
+  const team = { ...TEAM, mainBotIds: ['chief', 'writer'] }
+  const { rt, stop } = await start({ planMode, team })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'chief', text: 'PLAN-APPROVED job-1: go', role: 'request' })
+  assert.deepEqual(planMode.calls, [['chief', false]])
+})
+
+test('an ORDER from a Main Bot turns plan mode off', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode })
+  t.after(stop)
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'ORDER from Chief · job j-1 · decisions come back to me\nBuild it.', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.bot, entry.manager, entry.tool, entry.outcome], ['Coder', 'Chief', 'order', 'committed'])
+})
+
+test('an ORDER from a Bot that is not a Main Bot changes nothing and says why', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'ORDER from Writer · job j-2 · decisions come back to me', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.tool, entry.outcome], ['order', 'sender-not-main'])
+})
+
+test('ORDER mid-text is not an order', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, stop } = await start({ planMode })
+  t.after(stop)
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'Note the ORDER from Chief · job j-3 line below', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+})
+
+test('DSH_ORDER_RELEASE=off leaves PLAN-APPROVED working and ORDER inert', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, stop } = await start({ planMode })
+  const before = process.env.DSH_ORDER_RELEASE
+  process.env.DSH_ORDER_RELEASE = 'off'
+  t.after(async () => {
+    if (before === undefined) delete process.env.DSH_ORDER_RELEASE
+    else process.env.DSH_ORDER_RELEASE = before
+    await stop()
+  })
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'ORDER from Chief · job j-4 · decisions come back to me', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'PLAN-APPROVED j-4: go', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+})
+
+test('a release on a Bot not in plan mode is logged as not-in-plan-mode', async (t) => {
+  const planMode = fakePlanMode({})
+  const { rt, log, stop } = await start({ planMode })
+  t.after(stop)
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'PLAN-APPROVED j-5: go', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  const [entry] = await anyLines(log)
+  assert.deepEqual([entry.tool, entry.outcome], ['plan-approved', 'not-in-plan-mode'])
+})
+
+test('the gate says it is loaded at start-up', async (t) => {
+  const { log, stop } = await start()
+  t.after(stop)
+  const lines = await log({ all: true })
+  const loaded = lines.find(line => line.tool === 'gate-loaded')
+  assert.ok(loaded, 'gate-loaded line written')
+  assert.equal(loaded.release, 'plan-approved+order')
 })
 
 test('PLAN-APPROVED does nothing when plan mode is not composed', async (t) => {
@@ -222,5 +311,100 @@ test('DSH_CARD_GATE=off turns the gate off', async (t) => {
   fromBot('coder', 'chief', 'Build it')
   assert.equal(guard('coder', 'exit_plan_mode', { plan: '# Plan' }), undefined)
   await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'PLAN-APPROVED', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+})
+
+// --- 2026-11-03: plan mode under an agent preset, and Bots that start with it off ---
+
+// The log is written asynchronously: read it until a line appears.
+async function anyLines(log) {
+  for (let i = 0; i < 50; i++) {
+    const lines = await log()
+    if (lines.length > 0) return lines
+  }
+  return []
+}
+
+// The same, for one tool's lines.
+async function linesFor(log, tool) {
+  for (let i = 0; i < 50; i++) {
+    const lines = (await log()).filter(line => line.tool === tool)
+    if (lines.length > 0) return lines
+  }
+  return []
+}
+
+test('PLAN-APPROVED reaches plan mode inside an agent preset (no Host-realm service)', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode, realm: 'preset' })
+  t.after(stop)
+  await rt.deliver({ fromId: 'chief', toId: 'coder', text: 'PLAN-APPROVED j-6: deploy to production', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+  const entry = (await linesFor(log, 'plan-approved'))[0]
+  assert.equal(entry.outcome, 'committed')
+})
+
+test('a Bot Session in plan mode is switched off once on its first delivery', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode, realm: 'preset', planDefault: true })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+  // The user turns plan mode back on in that chat: it is his choice and stays.
+  planMode.active.coder = true
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'again', role: 'request' })
+  assert.deepEqual(planMode.calls, [['coder', false]])
+  assert.equal(planMode.active.coder, true)
+  const entries = (await linesFor(log, 'plan-default-off'))
+  assert.equal(entries.length, 1)
+  assert.deepEqual([entries[0].bot, entries[0].why, entries[0].outcome], ['Coder', 'delivery', 'committed'])
+  assert.equal(rt.state.planDefaultOff.coder, 'committed')
+})
+
+test('a Bot named in plan-mode-keep.json keeps plan mode', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, log, stop } = await start({ planMode, realm: 'preset', planDefault: true, keep: ['coder'] })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  const entry = (await linesFor(log, 'plan-default-off'))[0]
+  assert.equal(entry.outcome, 'kept-bot-opt-in')
+})
+
+test('a Bot with planMode on keeps plan mode', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const team = { ...TEAM, bots: { ...TEAM.bots, coder: { ...TEAM.bots.coder, planMode: 'on' } } }
+  const { rt, stop } = await start({ planMode, team, realm: 'preset', planDefault: true })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+})
+
+test('a Session already out of plan mode is left as it is', async (t) => {
+  const planMode = fakePlanMode({})
+  const { rt, log, stop } = await start({ planMode, realm: 'preset', planDefault: true })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
+  assert.deepEqual(planMode.calls, [])
+  const entry = (await linesFor(log, 'plan-default-off'))[0]
+  assert.equal(entry.outcome, 'already-off')
+})
+
+test('a new Bot Session DS Bot makes starts out of plan mode', async (t) => {
+  const planMode = fakePlanMode({ s1: true })
+  const { rt, log, stop } = await start({ planMode, realm: 'preset', planDefault: true })
+  t.after(stop)
+  const id = await rt.createSession('Fresh part')
+  assert.equal(id, 's1')
+  assert.deepEqual(planMode.calls, [['s1', false]])
+  const entry = (await linesFor(log, 'plan-default-off'))[0]
+  assert.deepEqual([entry.why, entry.outcome], ['new-session', 'committed'])
+})
+
+test('DSH_PLAN_DEFAULT_OFF=off leaves plan mode alone', async (t) => {
+  const planMode = fakePlanMode({ coder: true })
+  const { rt, stop } = await start({ planMode, realm: 'preset' })
+  t.after(stop)
+  await rt.deliver({ fromId: 'writer', toId: 'coder', text: 'hello', role: 'request' })
   assert.deepEqual(planMode.calls, [])
 })

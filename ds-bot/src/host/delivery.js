@@ -1,12 +1,14 @@
 // Delivery: how one Bot, the user, or DS Bot itself puts a message into a Bot Session.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { relayPlanApproval } from './card-gate.js'
+import { announceGate, ensurePlanOff, relayPlanApproval } from './card-gate.js'
 import { HISTORY_TIMEOUT_MS, LONG_HEAD, MESSAGE_INLINE_MAX, READ_LINE_MAX, SOURCE_KIND, TEXT_KEPT, TEXT_SHOW_MAX } from './constants.js'
 import { headOf, textOf } from './text.js'
 
 export function install(rt) {
   const { ctx, state } = rt
+  // The card gate says once that it is loaded, so its log proves which code runs.
+  void announceGate(rt)
 
   const resolveAgent = async (sessionId) => {
     const resolved = await ctx.sessionController.resolveAgent(sessionId)
@@ -99,6 +101,7 @@ export function install(rt) {
     })
     // A Main Bot relaying a plan approval takes the Bot out of plan mode, before the
     // message that carries it is read (card-gate.js).
+    ensurePlanOff(rt, agent, 'delivery')
     relayPlanApproval(rt, { fromId, toId, agent, text })
     if (steer) agent.steer(message)
     else agent.followup(message)
