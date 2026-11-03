@@ -14,8 +14,7 @@
 //
 // DSH_CARD_GATE=off turns all of it off.
 
-import { readFileSync } from 'node:fs'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export const CARD_IT_YOURSELF = 'CARD-IT-YOURSELF'
@@ -91,14 +90,22 @@ export function refusePlan(rt, sessionId) {
   return { ...gated, text: planRefusal(gated.manager) }
 }
 
-/** One JSON line in <home>/logs/card-gate.log. Only names, the tool and a title. */
+/**
+ * One JSON line in <home>/logs/card-gate.log. Only names, the tool and a title.
+ * Written synchronously: a fire-and-forget async write could land after the host
+ * stopped and its folder was removed (seen as ENOTEMPTY in test teardown on Node 22).
+ */
 export function logGate(rt, entry) {
   if (typeof rt.home !== 'string') return Promise.resolve()
   const path = join(rt.home, 'logs', 'card-gate.log')
   const line = JSON.stringify({ time: new Date().toISOString(), ...entry, ...(entry.title !== undefined ? { title: clip(rt.redactSecrets?.(entry.title) ?? entry.title) } : {}) })
-  return mkdir(dirname(path), { recursive: true })
-    .then(() => appendFile(path, `${line}\n`, 'utf8'))
-    .catch(error => rt.warn?.('ds-bot: card gate log not written: %s', error?.code ?? error))
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${line}\n`, 'utf8')
+  } catch (error) {
+    rt.warn?.('ds-bot: card gate log not written: %s', error?.code ?? error)
+  }
+  return Promise.resolve()
 }
 
 // A job a Main Bot hands out opens with this line; it carries the manager's

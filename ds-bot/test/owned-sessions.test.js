@@ -1,6 +1,6 @@
 // local: sidebar-coexistence. The Bot list sits in the shell's own sidebar, so the shell
 // must know which Sessions the team owns to keep them out of its own sections. The
-// client publishes them as window.__dshBotSessions and the dsh-bot:sessions event.
+// client publishes them on window.__dshBotSessions and fires the sessions event.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
