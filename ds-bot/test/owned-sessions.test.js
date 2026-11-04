@@ -47,13 +47,13 @@ test('owned Sessions go out on the new event and on the legacy one, in that orde
   publishOwnedSessions(win, ids)
   assert.equal(SESSIONS_EVENT, 'ds-bot:sessions')
   assert.equal(legacySessionsEvent, 'dsh-bot:sessions')
-  assert.deepEqual(win.seen, [['ds-bot:sessions', ids], ['dsh-bot:sessions', ids]])
+  assert.deepEqual(win.seen, [['ds-bot:sessions', ids], [legacySessionsEvent, ids]])
   assert.deepEqual(win.__dshBotSessions, ids)
 })
 
 test('clearing publishes an empty list on both events', () => {
   const win = fakeWindow()
   publishOwnedSessions(win, [])
-  assert.deepEqual(win.seen, [['ds-bot:sessions', []], ['dsh-bot:sessions', []]])
+  assert.deepEqual(win.seen, [['ds-bot:sessions', []], [legacySessionsEvent, []]])
   assert.deepEqual(win.__dshBotSessions, [])
 })
