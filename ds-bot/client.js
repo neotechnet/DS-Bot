@@ -1121,6 +1121,7 @@ var ZH = {
   "Add files": "添加文件",
   "Reference a chat": "引用对话",
   "Chat with {name}": "与 {name} 的对话",
+  Brainstorm: "头脑风暴",
   "Scheduled task": "定时任务",
   "Send to": "发给",
   "Scheduled task: {text}": "定时任务：{text}",
@@ -4111,6 +4112,7 @@ var SwitchIcon = lineIcon(["M4 7h9.5M10.5 3.5L14 7l-3.5 3.5", "M16 13H6.5M9.5 9.
 var SignOutIcon = lineIcon(["M8.5 17H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5", "M10 10h6.5", "M13.5 7l3 3-3 3"]);
 var SignInIcon = lineIcon(["M11.5 3H14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2.5", "M3.5 10H10", "M7 7l3 3-3 3"]);
 var PaperclipIcon = lineIcon(["M15.5 9.5l-5.6 5.6a3.4 3.4 0 0 1-4.8-4.8l6.1-6.1a2.25 2.25 0 0 1 3.2 3.2l-6 6a1.1 1.1 0 0 1-1.6-1.6l5.5-5.5"]);
+var BulbIcon = lineIcon(["M7.5 14.5h5", "M8.25 17h3.5", "M7.5 12.5a5 5 0 1 1 5 0v2h-5z"]);
 var ClockIcon = lineIcon(["M10 3.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13z", "M10 6.5V10l2.5 1.5"]);
 var GearIcon = lineIcon(["M10 7.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2z", "M7.85 4.4l.29-1.87a7.7 7.7 0 0 1 3.72 0l.29 1.87a6 6 0 0 1 1.63.94l1.76-.69a7.7 7.7 0 0 1 1.86 3.23l-1.47 1.18a6 6 0 0 1 0 1.88l1.47 1.18a7.7 7.7 0 0 1-1.86 3.23l-1.76-.69a6 6 0 0 1-1.63.94l-.29 1.87a7.7 7.7 0 0 1-3.72 0l-.29-1.87a6 6 0 0 1-1.63-.94l-1.76.69a7.7 7.7 0 0 1-1.86-3.23l1.47-1.18a6 6 0 0 1 0-1.88L2.6 7.88a7.7 7.7 0 0 1 1.86-3.23l1.76.69a6 6 0 0 1 1.63-.94z"]);
 var PinIcon = lineIcon(["M12.5 3l4.5 4.5-3 1.5-2.5 2.5.5 3.5-1.5 1.5L7 13 3.5 16.5", "M7 13l-3.5-3.5L5 8l3.5.5L11 6l1.5-3"]);
@@ -11492,6 +11494,15 @@ var steerQueued = async (session) => {
   }
 };
 
+// src/client/brainstorm.js
+var BRAINSTORM_TEXT = "brainstorm ";
+var canBrainstorm = (inputActions) => typeof inputActions?.insertText === "function";
+function insertBrainstorm(inputActions) {
+  if (!canBrainstorm(inputActions)) return false;
+  inputActions.insertText(BRAINSTORM_TEXT, inputActions.captureInsertion?.());
+  return true;
+}
+
 // src/client/composer.js
 var import_react23 = require("react");
 var import_react_dom5 = require("react-dom");
@@ -11703,6 +11714,10 @@ function ComposerPlus({ sessionId, inputActions, useInput, useRoster, actions })
     actions.referenceChat(sessionId, inputActions?.captureInsertion?.());
   };
   const canReference = typeof inputActions?.captureInsertion === "function" && actions.canReferenceChat();
+  const brainstorm = () => {
+    setOpen(null);
+    insertBrainstorm(inputActions);
+  };
   const room2 = roster.roomsById?.[sessionId];
   const goal = () => {
     setOpen(null);
@@ -11734,6 +11749,7 @@ function ComposerPlus({ sessionId, inputActions, useInput, useRoster, actions })
       },
       shown.files ? (0, import_react23.createElement)("button", { type: "button", role: "menuitem", onClick: attach }, (0, import_react23.createElement)(PaperclipIcon), (0, import_react23.createElement)("span", { className: "bt-menu-label" }, t("Add files"))) : null,
       canReference ? (0, import_react23.createElement)("button", { type: "button", role: "menuitem", onMouseDown: keepComposerFocus, onClick: reference }, (0, import_react23.createElement)(ChatsIcon), (0, import_react23.createElement)("span", { className: "bt-menu-label" }, t("Reference a chat"))) : null,
+      canBrainstorm(inputActions) ? (0, import_react23.createElement)("button", { type: "button", role: "menuitem", onMouseDown: keepComposerFocus, onClick: brainstorm }, (0, import_react23.createElement)(BulbIcon), (0, import_react23.createElement)("span", { className: "bt-menu-label" }, t("Brainstorm"))) : null,
       canSetGoal(room2, roster) ? (0, import_react23.createElement)("button", { type: "button", role: "menuitem", onClick: goal }, (0, import_react23.createElement)(GoalIcon), (0, import_react23.createElement)("span", { className: "bt-menu-label" }, t("Set a goal"))) : null,
       (0, import_react23.createElement)("button", { type: "button", role: "menuitem", onClick: schedule }, (0, import_react23.createElement)(ClockIcon), (0, import_react23.createElement)("span", { className: "bt-menu-label" }, t("Scheduled task")))
     ), document.body) : null
