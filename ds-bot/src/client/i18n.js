@@ -1074,6 +1074,7 @@ const ZH = {
   'Add files': '添加文件',
   'Reference a chat': '引用对话',
   'Chat with {name}': '与 {name} 的对话',
+  Brainstorm: '头脑风暴',
   'Scheduled task': '定时任务',
   'Send to': '发给',
   'Scheduled task: {text}': '定时任务：{text}',
