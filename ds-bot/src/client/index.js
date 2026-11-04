@@ -1,7 +1,7 @@
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
-import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds } from './sources.js'
+import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds, publishOwnedSessions } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
@@ -35,6 +35,7 @@ import { GROUP_SETTINGS_CSS } from './group-settings.js'
 import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
+import { OPERATOR_TASKS_CSS } from './operator-tasks.js'
 import { STORAGE, migrateStorage } from './storage.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
@@ -65,17 +66,12 @@ export function apply(ctx) {
   // plugin owns (Bot chats and parts, group Sessions, Agent Sessions) are published
   // here so the shell can keep them out of its own sections.
   ctx.effect(() => {
-    const publish = () => {
-      const ids = ownedSessionIds(roster.getSnapshot())
-      window.__dshBotSessions = ids
-      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: ids }))
-    }
+    const publish = () => publishOwnedSessions(window, ownedSessionIds(roster.getSnapshot()))
     const off = roster.subscribe(publish)
     publish()
     return () => {
       off()
-      window.__dshBotSessions = []
-      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: [] }))
+      publishOwnedSessions(window, [])
     }
   }, 'ds-bot: publish owned sessions')
   const unreadStore = sharedMap(STORAGE.unread)
@@ -198,6 +194,7 @@ export function apply(ctx) {
     const live = {}
     if (value.connectors !== undefined && JSON.stringify(value.connectors) !== JSON.stringify(current.connectors ?? [])) live.connectors = value.connectors
     if (value.capabilityStatuses !== undefined && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live.capabilityStatuses = value.capabilityStatuses
+    if (value.operatorTasks !== undefined && JSON.stringify(value.operatorTasks) !== JSON.stringify(current.operatorTasks ?? {})) live.operatorTasks = value.operatorTasks
     if (value.learning !== undefined && JSON.stringify(value.learning) !== JSON.stringify(current.learning ?? {})) live.learning = value.learning
     if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
     if (value.sideChats !== undefined && JSON.stringify(value.sideChats) !== JSON.stringify(current.sideChats ?? {})) live.sideChats = value.sideChats
@@ -944,6 +941,7 @@ export function apply(ctx) {
     () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
+    () => installCompiledStyles(OPERATOR_TASKS_CSS, 'operator-tasks'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
     () => installCompiledStyles(ABOUT_CSS, 'about'),
     () => installCompiledStyles(MEMBER_CSS, 'members'),
