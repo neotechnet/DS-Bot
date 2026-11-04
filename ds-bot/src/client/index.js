@@ -1,7 +1,7 @@
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
-import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds } from './sources.js'
+import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds, publishOwnedSessions } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
@@ -66,17 +66,12 @@ export function apply(ctx) {
   // plugin owns (Bot chats and parts, group Sessions, Agent Sessions) are published
   // here so the shell can keep them out of its own sections.
   ctx.effect(() => {
-    const publish = () => {
-      const ids = ownedSessionIds(roster.getSnapshot())
-      window.__dshBotSessions = ids
-      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: ids }))
-    }
+    const publish = () => publishOwnedSessions(window, ownedSessionIds(roster.getSnapshot()))
     const off = roster.subscribe(publish)
     publish()
     return () => {
       off()
-      window.__dshBotSessions = []
-      window.dispatchEvent(new CustomEvent('dsh-bot:sessions', { detail: [] }))
+      publishOwnedSessions(window, [])
     }
   }, 'ds-bot: publish owned sessions')
   const unreadStore = sharedMap(STORAGE.unread)

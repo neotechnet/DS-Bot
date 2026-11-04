@@ -55,6 +55,17 @@ export function indexRoster(value) {
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true }
 }
 
+// local: sidebar-coexistence. The event the shell listens on for the Sessions this
+// plugin owns. The installed shell still listens on the old name, so both go out
+// until one release after the shell takes the new one (loose end LE-20261103-033).
+export const SESSIONS_EVENT = 'ds-bot:sessions'
+export const legacySessionsEvent = 'dsh-bot:sessions'
+export function publishOwnedSessions(win, ids) {
+  win.__dshBotSessions = ids
+  win.dispatchEvent(new CustomEvent(SESSIONS_EVENT, { detail: ids }))
+  win.dispatchEvent(new CustomEvent(legacySessionsEvent, { detail: ids }))
+}
+
 // Whether a main-view Session id belongs to the team's DSH Agent: the conversation
 // group then stays withdrawn while the shell keeps the sidebar. Before the roster
 // arrives, the ids cached from the last pull answer.

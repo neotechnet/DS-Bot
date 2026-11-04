@@ -32,3 +32,28 @@ test('the owned Sessions are every Bot part, every group Session and every Agent
 test('an empty roster owns nothing', () => {
   assert.deepEqual(ownedSessionIds(indexRoster({ bots: [], rooms: [] })), [])
 })
+
+// The installed shell listens on the legacy name and an updated one on the new name,
+// so both events go out, the new one first (LE-20261103-033).
+const { SESSIONS_EVENT, legacySessionsEvent, publishOwnedSessions } = await import('../src/client/sources.js')
+const fakeWindow = () => {
+  const seen = []
+  return { seen, dispatchEvent: (event) => { seen.push([event.type, event.detail]); return true } }
+}
+
+test('owned Sessions go out on the new event and on the legacy one, in that order', () => {
+  const win = fakeWindow()
+  const ids = ['s1', 's2']
+  publishOwnedSessions(win, ids)
+  assert.equal(SESSIONS_EVENT, 'ds-bot:sessions')
+  assert.equal(legacySessionsEvent, 'dsh-bot:sessions')
+  assert.deepEqual(win.seen, [['ds-bot:sessions', ids], [legacySessionsEvent, ids]])
+  assert.deepEqual(win.__dshBotSessions, ids)
+})
+
+test('clearing publishes an empty list on both events', () => {
+  const win = fakeWindow()
+  publishOwnedSessions(win, [])
+  assert.deepEqual(win.seen, [['ds-bot:sessions', []], [legacySessionsEvent, []]])
+  assert.deepEqual(win.__dshBotSessions, [])
+})

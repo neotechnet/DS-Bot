@@ -1687,6 +1687,13 @@ function indexRoster(value) {
   }
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true };
 }
+var SESSIONS_EVENT = "ds-bot:sessions";
+var legacySessionsEvent = "dsh-bot:sessions";
+function publishOwnedSessions(win, ids) {
+  win.__dshBotSessions = ids;
+  win.dispatchEvent(new CustomEvent(SESSIONS_EVENT, { detail: ids }));
+  win.dispatchEvent(new CustomEvent(legacySessionsEvent, { detail: ids }));
+}
 function isAgentSession(roster, cache, sessionId) {
   if (sessionId === void 0 || sessionId === null || sessionId === "") return false;
   if (roster.ready) return roster.agentOf[sessionId] !== void 0;
@@ -22011,17 +22018,12 @@ function apply(ctx) {
   }
   const roster = createSource({ ...EMPTY_ROSTER, prefs: savedPrefs });
   ctx.effect(() => {
-    const publish2 = () => {
-      const ids = ownedSessionIds(roster.getSnapshot());
-      window.__dshBotSessions = ids;
-      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: ids }));
-    };
+    const publish2 = () => publishOwnedSessions(window, ownedSessionIds(roster.getSnapshot()));
     const off = roster.subscribe(publish2);
     publish2();
     return () => {
       off();
-      window.__dshBotSessions = [];
-      window.dispatchEvent(new CustomEvent("dsh-bot:sessions", { detail: [] }));
+      publishOwnedSessions(window, []);
     };
   }, "ds-bot: publish owned sessions");
   const unreadStore = sharedMap(STORAGE.unread);
