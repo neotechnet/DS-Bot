@@ -1,12 +1,13 @@
 import { createElement as h, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChatsIcon, ClockIcon, GoalIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, WaveIcon } from './icons.js'
+import { BulbIcon, ChatsIcon, ClockIcon, GoalIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, WaveIcon } from './icons.js'
 import { canSetGoal } from './goal.js'
 import { BotMark } from './mark.js'
 import { useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
 import { insertComposerNewline, sendsOnEnter } from './enter-key.js'
 import { enterSteers, steerable } from './enter-steer.js'
+import { canBrainstorm, insertBrainstorm } from './brainstorm.js'
 
 // -------------------------------------------------------------------------
 // Composer: dictation mic and the voice-chat button. The shell's send
@@ -197,6 +198,10 @@ export function ComposerPlus({ sessionId, inputActions, useInput, useRoster, act
     actions.referenceChat(sessionId, inputActions?.captureInsertion?.())
   }
   const canReference = typeof inputActions?.captureInsertion === 'function' && actions.canReferenceChat()
+  const brainstorm = () => {
+    setOpen(null)
+    insertBrainstorm(inputActions)
+  }
   const room = roster.roomsById?.[sessionId]
   const goal = () => {
     setOpen(null)
@@ -213,6 +218,7 @@ export function ComposerPlus({ sessionId, inputActions, useInput, useRoster, act
     },
     shown.files ? h('button', { type: 'button', role: 'menuitem', onClick: attach }, h(PaperclipIcon), h('span', { className: 'bt-menu-label' }, t('Add files'))) : null,
     canReference ? h('button', { type: 'button', role: 'menuitem', onMouseDown: keepComposerFocus, onClick: reference }, h(ChatsIcon), h('span', { className: 'bt-menu-label' }, t('Reference a chat'))) : null,
+    canBrainstorm(inputActions) ? h('button', { type: 'button', role: 'menuitem', onMouseDown: keepComposerFocus, onClick: brainstorm }, h(BulbIcon), h('span', { className: 'bt-menu-label' }, t('Brainstorm'))) : null,
     canSetGoal(room, roster) ? h('button', { type: 'button', role: 'menuitem', onClick: goal }, h(GoalIcon), h('span', { className: 'bt-menu-label' }, t('Set a goal'))) : null,
     h('button', { type: 'button', role: 'menuitem', onClick: schedule }, h(ClockIcon), h('span', { className: 'bt-menu-label' }, t('Scheduled task')))), document.body) : null)
 }
