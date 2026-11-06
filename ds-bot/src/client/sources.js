@@ -16,9 +16,20 @@ export function createSource(initial) {
   }
 }
 
-export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, learning: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false }
+export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, learning: {}, secrets: [], capabilities: [], capabilityStatuses: {}, operatorTasks: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false }
 // Any Main Bot holds the Main Bot powers; `mainBotId`, the first one, is the sidebar tile.
 export const isMainOf = (roster, id) => id !== undefined && (roster.mainBotIds ?? []).includes(id)
+
+// local: sidebar-coexistence. Every Session the team owns: Bot chats and their parts,
+// group Sessions with their parts and each member's Session there, and the Sessions of
+// DSH Agents. The shell keeps these out of its own sections.
+export function ownedSessionIds(roster) {
+  return [...new Set([
+    ...roster.bots.flatMap(bot => [bot.id, bot.sessionId ?? bot.id, ...(bot.parts ?? [])]),
+    ...roster.rooms.flatMap(room => [room.id, room.sessionId ?? room.id, ...(room.ownParts ?? []), ...(room.parts ?? []), ...Object.values(room.sessions ?? {})]),
+    ...Object.keys(roster.agentOf ?? {}),
+  ].filter(id => typeof id === 'string' && id !== ''))]
+}
 
 // A Bot's chat is a chain of Sessions ("parts"): the Bot id is its first part's id
 // and `sessionId` its current one. Every part id finds the Bot; Session state
@@ -42,6 +53,17 @@ export function indexRoster(value) {
     for (const sessionId of agent.sessions ?? []) agentOf[sessionId] = agent.id
   }
   return { ...value, agents: value.agents ?? [], byId, roomsById, agentsById, agentOf, ready: true }
+}
+
+// local: sidebar-coexistence. The event the shell listens on for the Sessions this
+// plugin owns. The installed shell still listens on the old name, so both go out
+// until one release after the shell takes the new one (loose end LE-20261103-033).
+export const SESSIONS_EVENT = 'ds-bot:sessions'
+export const legacySessionsEvent = 'dsh-bot:sessions'
+export function publishOwnedSessions(win, ids) {
+  win.__dshBotSessions = ids
+  win.dispatchEvent(new CustomEvent(SESSIONS_EVENT, { detail: ids }))
+  win.dispatchEvent(new CustomEvent(legacySessionsEvent, { detail: ids }))
 }
 
 // Whether a main-view Session id belongs to the team's DSH Agent: the conversation
