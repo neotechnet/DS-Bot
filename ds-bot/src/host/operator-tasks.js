@@ -22,6 +22,12 @@ const askLine = (text) => {
   const line = String(text ?? '').split(/\r?\n/).map(part => part.trim()).find(part => part !== '')
   return line === undefined ? undefined : clip(line, 160)
 }
+// A relayed message opens with the relay header line: it frames the message, it is not
+// part of what the operator asked for.
+const relayBody = (work) => {
+  const text = String(work.ask ?? '')
+  return work.originFrom === undefined ? text : text.replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r?\n]*\])/, '')
+}
 const timeOf = (value) => {
   const at = typeof value === 'number' ? value : Date.parse(String(value ?? ''))
   return Number.isFinite(at) ? at : undefined
@@ -128,7 +134,10 @@ export function install(rt) {
     for (const [botId, work] of Object.entries(rt.workView?.() ?? {})) {
       const operator = work.origin === 'operator'
       if (work.work !== undefined) runningWork.set(botId, work.work)
-      const text = operator ? askLine(work.ask) : work.said
+      // The ask the work was opened for outlives the turn that took it, so a Bot that
+      // took the job on shows what the operator asked for, not the hand-on message.
+      const openedFor = operator && work.work !== undefined ? state.works?.[work.work]?.ask : undefined
+      const text = operator ? askLine(openedFor ?? relayBody(work)) : work.said
       add(botId, operator ? 'operator' : 'active', {
         kind: operator ? (work.originFrom ? 'relay' : 'ask') : 'turn',
         key: 'turn',

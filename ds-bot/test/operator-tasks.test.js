@@ -185,8 +185,8 @@ test('a relayed turn carries the operator origin, and a plain team job does not'
   emit('b', 'user/message', { content: textBlock('[Message from Igor]\nrun the checks'), source: relay({ origin: 'operator' }) })
   assert.equal(rt.workView().b.origin, 'operator')
   assert.equal(rt.workView().b.originFrom, 'Igor')
-  // The ask is the message body: the relay header line is not part of it.
-  assert.equal(rt.workView().b.ask, 'run the checks')
+  // The card shows the message body: the relay header line is not part of the ask.
+  assert.equal(rt.operatorTasksView().b.operator[0].text, 'run the checks')
   assert.equal(rt.operatorTasksView().b.operator[0].kind, 'relay')
   emit('b', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
 
@@ -216,7 +216,6 @@ test('a job handed on keeps the operator ask, and the turn taking it shows that 
     source: { kind: SOURCE_KIND, form: 'relay', role: 'reply', senderName: 'Igor', exchangeId: 'e9', work: 'w1' },
   })
   assert.equal(rt.workView().b.origin, 'operator')
-  assert.equal(rt.workView().b.ask, 'Fix the sidebar card')
   assert.equal(rt.operatorTasksView().b.operator[0].text, 'Fix the sidebar card')
 })
 

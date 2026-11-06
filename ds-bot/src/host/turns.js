@@ -469,9 +469,6 @@ export function install(rt) {
       const botId = owner?.botId ?? rt.chatOwners.get(id)
       if (botId === undefined || (owner !== undefined && bots[botId] !== undefined)) continue
       const forWork = rt.workOf?.(entry.info)
-      // The ask the work was opened for outlives the turn that took it, so a Bot that
-      // picked the job up from a manager still shows what the operator asked for.
-      const ask = (forWork !== undefined ? state.works?.[forWork]?.ask : undefined) ?? entry.askText
       bots[botId] = {
         since: entry.since,
         ...doingOf(entry),
@@ -480,7 +477,7 @@ export function install(rt) {
         ...(entry.origin === 'operator' ? {
           origin: 'operator',
           ...(entry.originFrom ? { originFrom: entry.originFrom } : {}),
-          ...(ask ? { ask } : {}),
+          ...(entry.askText ? { ask: entry.askText } : {}),
         } : {}),
       }
     }
@@ -783,7 +780,7 @@ export function install(rt) {
           entry.origin = 'operator'
           entry.originAt ??= Date.now()
           delete entry.originFrom
-          const asked = textOf(event.data.content).replace(/^\[(?:[^\r\n]*\]\r?\n|[^\]\r?\n]*\])/, '')
+          const asked = textOf(event.data.content)
           if (asked.trim() !== '') entry.askText = asked
         }
         if (entry.turn !== undefined && !bare(source)
