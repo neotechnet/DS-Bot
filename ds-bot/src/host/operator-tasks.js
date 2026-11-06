@@ -16,6 +16,12 @@ const clip = (text, max = TEXT_MAX) => {
   const flat = String(text ?? '').replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
+// The operator's ask, as the card keeps it: the first line of their message, trimmed.
+// A step the Bot took later is not the ask, so work without one keeps no text at all.
+const askLine = (text) => {
+  const line = String(text ?? '').split(/\r?\n/).map(part => part.trim()).find(part => part !== '')
+  return line === undefined ? undefined : clip(line, 160)
+}
 const timeOf = (value) => {
   const at = typeof value === 'number' ? value : Date.parse(String(value ?? ''))
   return Number.isFinite(at) ? at : undefined
@@ -122,7 +128,7 @@ export function install(rt) {
     for (const [botId, work] of Object.entries(rt.workView?.() ?? {})) {
       const operator = work.origin === 'operator'
       if (work.work !== undefined) runningWork.set(botId, work.work)
-      const text = operator ? work.ask ?? work.said : work.said
+      const text = operator ? askLine(work.ask) : work.said
       add(botId, operator ? 'operator' : 'active', {
         kind: operator ? (work.originFrom ? 'relay' : 'ask') : 'turn',
         key: 'turn',

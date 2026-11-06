@@ -104,8 +104,12 @@ export function install(rt) {
     const above = parent === undefined ? undefined : works()[parent]
     // The job remembers where it came from: the work it belongs to, else the turn its
     // sender is running. Saved with the rest, so a restart keeps the Operator Task.
-    const origin = above?.origin ?? (rt.operatorTurnOf?.(from) !== undefined ? 'operator' : undefined)
-    works()[id] = { ...(from ? { from } : {}), ...(to ? { to } : {}), ...(room ? { room } : {}), ...(above ? { parent } : {}), ...(fromRoom ? { fromRoom } : {}), ...(name ? { name } : {}), ...(child ? { child } : {}), ...(origin ? { origin } : {}), open: [], results: [], at: Date.now() }
+    const turn = rt.operatorTurnOf?.(from)
+    const origin = above?.origin ?? (turn !== undefined ? 'operator' : undefined)
+    // The operator's ask rides on the work, so a Bot that takes the job on still shows
+    // it after the turn that took it has ended.
+    const ask = above?.ask ?? turn?.askText
+    works()[id] = { ...(from ? { from } : {}), ...(to ? { to } : {}), ...(room ? { room } : {}), ...(above ? { parent } : {}), ...(fromRoom ? { fromRoom } : {}), ...(name ? { name } : {}), ...(child ? { child } : {}), ...(origin ? { origin } : {}), ...(ask ? { ask: headOf(ask, 240) } : {}), open: [], results: [], at: Date.now() }
     if (above !== undefined) above.open.push(id)
     save()
   }

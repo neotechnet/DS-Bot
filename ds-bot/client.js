@@ -1179,6 +1179,7 @@ var ZH = {
   "Unresolved Tasks": "待你处理的任务",
   "{title} · {count}": "{title} · {count}",
   "Your ask": "你的要求",
+  "The ask is not recorded": "没有记录你的要求",
   "Relayed by {name}": "由 {name} 转达",
   "Nothing of yours in hand.": "你交给它的任务都完成了。",
   "Nothing running right now.": "现在没有在进行的工作。",
@@ -11295,10 +11296,15 @@ function unresolvedLine(item) {
       return { label: "", text: item.text ?? "" };
   }
 }
-var doingOf2 = (item) => {
+var stepOf = (item) => {
   if (item.switching) return t("Moving on to a fresh part");
-  if (item.tool === void 0) return item.text || t("Working");
+  if (item.tool === void 0) return void 0;
   return item.target ? t("Running {tool} on {target}", { tool: item.tool, target: item.target }) : t("Running {tool}", { tool: item.tool });
+};
+var doingOf2 = (item) => stepOf(item) ?? item.text ?? t("Working");
+var askOf = (item) => {
+  const line = String(item.text ?? "").split(/\r?\n/).map((part) => part.trim()).find((part) => part !== "");
+  return line ?? t("The ask is not recorded");
 };
 function activeLine(item, roster) {
   switch (item.kind) {
@@ -11315,9 +11321,9 @@ function activeLine(item, roster) {
 function operatorLine(item, roster) {
   switch (item.kind) {
     case "ask":
-      return { label: t("Your ask"), text: doingOf2(item) };
+      return { label: t("Your ask"), text: askOf(item), note: stepOf(item) };
     case "relay":
-      return { label: t("Relayed by {name}", { name: item.via ?? t("a teammate") }), text: doingOf2(item) };
+      return { label: t("Relayed by {name}", { name: item.via ?? t("a teammate") }), text: askOf(item), note: stepOf(item) };
     default:
       return activeLine(item, roster);
   }

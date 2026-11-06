@@ -1132,6 +1132,7 @@ const ZH = {
   'Unresolved Tasks': '待你处理的任务',
   '{title} · {count}': '{title} · {count}',
   'Your ask': '你的要求',
+  'The ask is not recorded': '没有记录你的要求',
   'Relayed by {name}': '由 {name} 转达',
   'Nothing of yours in hand.': '你交给它的任务都完成了。',
   'Nothing running right now.': '现在没有在进行的工作。',
