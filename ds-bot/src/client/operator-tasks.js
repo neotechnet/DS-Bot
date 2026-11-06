@@ -30,11 +30,21 @@ function unresolvedLine(item) {
   }
 }
 
-// What a running item is doing, in its own words.
-const doingOf = (item) => {
+// The running tool step, when there is one. It is a step on the job, never the job.
+const stepOf = (item) => {
   if (item.switching) return t('Moving on to a fresh part')
-  if (item.tool === undefined) return item.text || t('Working')
+  if (item.tool === undefined) return undefined
   return item.target ? t('Running {tool} on {target}', { tool: item.tool, target: item.target }) : t('Running {tool}', { tool: item.tool })
+}
+
+// What a running item is doing, in its own words.
+const doingOf = (item) => stepOf(item) ?? item.text ?? t('Working')
+
+// The operator's own words for the job: the first line of the message they sent, as it
+// was written. The step below it may move on, but the ask stays what it was.
+const askOf = (item) => {
+  const line = String(item.text ?? '').split(/\r?\n/).map(part => part.trim()).find(part => part !== '')
+  return line ?? t('The ask is not recorded')
 }
 
 function activeLine(item, roster) {
@@ -49,8 +59,8 @@ function activeLine(item, roster) {
 // The user's own work: the ask in their words, or the manager Bot that passed it on.
 function operatorLine(item, roster) {
   switch (item.kind) {
-    case 'ask': return { label: t('Your ask'), text: doingOf(item) }
-    case 'relay': return { label: t('Relayed by {name}', { name: item.via ?? t('a teammate') }), text: doingOf(item) }
+    case 'ask': return { label: t('Your ask'), text: askOf(item), note: stepOf(item) }
+    case 'relay': return { label: t('Relayed by {name}', { name: item.via ?? t('a teammate') }), text: askOf(item), note: stepOf(item) }
     default: return activeLine(item, roster)
   }
 }

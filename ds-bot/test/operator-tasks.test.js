@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { install, openDecisions } from '../src/host/operator-tasks.js'
 import { install as installTurns } from '../src/host/turns.js'
+import { install as installHandoffs } from '../src/host/handoffs.js'
 import { SOURCE_KIND } from '../src/host/constants.js'
 
 const line = record => JSON.stringify(record)
@@ -135,6 +136,7 @@ function turnHost({ works = {} } = {}) {
   const rt = {
     ctx: { on: (name, fn) => { if (name === 'session/event') listener = fn } },
     config: { looseEnds: false },
+    home: mkdtempSync(join(tmpdir(), 'ds-bot-optasks-host-')),
     state: { exchangeTurns: {}, questions: {}, views: {}, secretRequests: {}, works, bots: { b: { id: 'b', name: 'Writer' } } },
     isBotSession: () => true,
     roomOf: () => undefined,
@@ -153,6 +155,7 @@ function turnHost({ works = {} } = {}) {
     approvalsView: () => [],
   }
   installTurns(rt)
+  installHandoffs(rt)
   install(rt)
   let seq = 0
   const emit = (id, type, data) => listener({ id }, { type, seq: ++seq, data })
@@ -182,6 +185,8 @@ test('a relayed turn carries the operator origin, and a plain team job does not'
   emit('b', 'user/message', { content: textBlock('[Message from Igor]\nrun the checks'), source: relay({ origin: 'operator' }) })
   assert.equal(rt.workView().b.origin, 'operator')
   assert.equal(rt.workView().b.originFrom, 'Igor')
+  // The card shows the message body: the relay header line is not part of the ask.
+  assert.equal(rt.operatorTasksView().b.operator[0].text, 'run the checks')
   assert.equal(rt.operatorTasksView().b.operator[0].kind, 'relay')
   emit('b', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
 
@@ -191,6 +196,43 @@ test('a relayed turn carries the operator origin, and a plain team job does not'
   assert.equal(rt.workView().b.origin, undefined)
   assert.deepEqual(rt.operatorTasksView().b?.operator ?? [], [])
   assert.equal(rt.operatorTasksView().b.active[0].kind, 'turn')
+})
+
+// A job handed on carries the operator's ask on its work record, outliving the turn that
+// took it, so the Bot that picks it up shows what the operator actually asked for.
+test('a job handed on keeps the operator ask, and the turn taking it shows that ask', () => {
+  const { rt, emit } = turnHost()
+  emit('b', 'turn/start', { turn: 1 })
+  emit('b', 'user/message', { content: textBlock('Fix the sidebar card'), source: { kind: 'user' } })
+  rt.openWork('w1', { from: 'b', to: 'chief' })
+  assert.equal(rt.state.works.w1.origin, 'operator')
+  assert.equal(rt.state.works.w1.ask, 'Fix the sidebar card')
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+  // The next turn works on that job: the card keeps the ask, not the hand-on message.
+  emit('b', 'turn/start', { turn: 2 })
+  emit('b', 'user/message', {
+    content: textBlock('[Message from Igor]\nplease pick this up'),
+    source: { kind: SOURCE_KIND, form: 'relay', role: 'reply', senderName: 'Igor', exchangeId: 'e9', work: 'w1' },
+  })
+  assert.equal(rt.workView().b.origin, 'operator')
+  assert.equal(rt.operatorTasksView().b.operator[0].text, 'Fix the sidebar card')
+})
+
+// The card keeps the operator's first line; a step the Bot took is not the ask.
+test('the ask is the first line of the operator text, and the Bot\'s own words are not it', () => {
+  const rt = fakeRuntime({
+    looseEnds: false,
+    work: {
+      coder: { since: 100, tool: 'read', target: 'design_fidelity.py', origin: 'operator', ask: 'Fix the sidebar card\nand show the step below it' },
+      chief: { since: 110, tool: 'read', target: 'notes.md', origin: 'operator', said: 'Reading the notes' },
+    },
+  })
+  const view = rt.operatorTasksView()
+  assert.equal(view.coder.operator[0].text, 'Fix the sidebar card')
+  assert.equal(view.coder.operator[0].tool, 'read')
+  // Nothing of the Bot's own step stands in for an ask that was not recorded.
+  assert.equal(view.chief.operator[0].text, undefined)
 })
 
 test('a missing register leaves the decisions empty and the rest intact', () => {
@@ -305,6 +347,24 @@ test('the panel shows Operator Tasks above Active and Unresolved', () => {
   assert.equal(lines[0], 'Relayed by Igor')
   const texts = findAll(panel, node => node.props?.className === 'bt-ops-text').map(textOf)
   assert.equal(texts[0], 'Add the panel')
+})
+
+const askPanel = items => tree(OperatorTasks({
+  bot: { id: 'coder' },
+  roster: { byId: {}, roomsById: {}, operatorTasks: { coder: { operator: items, active: [], unresolved: [] } } },
+}))
+const linesOf = (panel, className) => JSON.parse(JSON.stringify(findAll(panel, node => node.props?.className === className).map(textOf)))
+
+test('a running step sits below the ask and never replaces it', () => {
+  const panel = askPanel([{ kind: 'ask', key: 'turn', at: 10, text: 'Fix the sidebar card\nand show the step below it', tool: 'read', target: 'design_fidelity.py' }])
+  assert.deepEqual(linesOf(panel, 'bt-ops-text'), ['Fix the sidebar card'])
+  assert.deepEqual(linesOf(panel, 'bt-ops-note'), ['Running read on design_fidelity.py'])
+})
+
+test('work whose ask was not recorded says so, with the step as its note', () => {
+  const panel = askPanel([{ kind: 'ask', key: 'turn', at: 10, tool: 'read', target: 'design_fidelity.py' }])
+  assert.deepEqual(linesOf(panel, 'bt-ops-text'), ['The ask is not recorded'])
+  assert.deepEqual(linesOf(panel, 'bt-ops-note'), ['Running read on design_fidelity.py'])
 })
 
 test('the header badge shows the two counts, A accent and U danger', () => {
