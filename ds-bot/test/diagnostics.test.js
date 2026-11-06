@@ -203,6 +203,11 @@ test('turnFailure drops AUTH messages and keeps the facts', () => {
   assert.deepEqual(turnFailure({ code: 'RATE_LIMIT', message: ' slow down ', requestId: 'r1' }), { code: 'RATE_LIMIT', message: 'slow down', requestId: 'r1' })
   assert.deepEqual(turnFailure(undefined), { code: 'UNKNOWN', message: '' })
   assert.equal(failureLine({ code: 'SERVER', status: 503, message: 'busy' }), 'SERVER 503: busy')
+  // The stack is what names the failing line in the log, and an AUTH failure keeps none.
+  const thrown = new Error('boom')
+  assert.equal(turnFailure(thrown).stack, thrown.stack)
+  assert.equal(turnFailure({ code: 'AUTH', message: '', stack: thrown.stack }).stack, undefined)
+  assert.equal(turnFailure({ code: 'SERVER', message: '', stack: 42 }).stack, undefined)
 })
 
 function turnsHost() {
@@ -245,6 +250,18 @@ test('a failed reply to message_bot tells the sender instead of leaving it waiti
   assert.equal(delivered[0].replyTo, 'x1')
   assert.match(delivered[0].text, /^Writer could not answer your message: its model call failed \(SERVER 503: upstream busy\)/)
   assert.deepEqual(noted.map(entry => [entry.source, entry.code, entry.bot, entry.where]), [['turn', 'SERVER', 'Writer', 'own chat']])
+})
+
+test('a failed turn carries its stack into the diagnostics entry', () => {
+  const { emit, noted } = turnsHost()
+  const thrown = new Error('the line that failed')
+  emit('b', 'turn/start', { turn: 1 })
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'error', error: { code: 'SERVER', message: 'upstream busy', stack: thrown.stack } } })
+  assert.equal(noted.length, 1)
+  assert.match(noted[0].stack, /diagnostics\.test\.js/)
+  emit('b', 'turn/start', { turn: 2 })
+  emit('b', 'turn/end', { turn: 2, reason: { kind: 'error', error: { code: 'AUTH', message: '', stack: thrown.stack } } })
+  assert.equal(noted[1].stack, undefined)
 })
 
 test('a failed group turn fails its waiter; a stopped one counts as no answer', () => {
