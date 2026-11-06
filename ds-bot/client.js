@@ -1174,13 +1174,20 @@ var ZH = {
   "New task": "新建任务",
   "No scheduled tasks yet.": "还没有定时任务。",
   "No scheduled tasks yet. Add one": "还没有定时任务，去添加",
+  "Operator Tasks": "你交给它的任务",
   "Active Tasks": "进行中的任务",
   "Unresolved Tasks": "待你处理的任务",
   "{title} · {count}": "{title} · {count}",
+  "Your ask": "你的要求",
+  "Relayed by {name}": "由 {name} 转达",
+  "Nothing of yours in hand.": "你交给它的任务都完成了。",
   "Nothing running right now.": "现在没有在进行的工作。",
   "Nothing waiting on you.": "没有等你处理的事。",
+  "1 task from you": "有 1 件事来自你",
+  "{count} tasks from you": "有 {count} 件事来自你",
   "1 task waits on you": "有 1 件事等你处理",
   "{count} tasks wait on you": "有 {count} 件事等你处理",
+  "{yours} from you, {waiting} waiting on you": "{yours} 件来自你，{waiting} 件等你处理",
   "a teammate": "一位队友",
   "a group": "一个群聊",
   'in group "{name}"': "在群聊「{name}」里",
@@ -11262,8 +11269,9 @@ var SIDEBAR_CSS = `
 
 // src/client/operator-tasks.js
 var import_react22 = require("react");
-var EMPTY = { active: [], unresolved: [] };
+var EMPTY = { operator: [], active: [], unresolved: [] };
 var operatorTasksOf = (roster, botId) => roster.operatorTasks?.[botId] ?? EMPTY;
+var operatorCount = (roster, botId) => operatorTasksOf(roster, botId).operator.length;
 var unresolvedCount = (roster, botId) => operatorTasksOf(roster, botId).unresolved.length;
 var nameOf = (roster, id) => roster.byId?.[id]?.name ?? roster.roomsById?.[id]?.name ?? t("a teammate");
 var where = (roster, item) => item.roomId ? t('in group "{name}"', { name: roster.roomsById?.[item.roomId]?.name ?? t("a group") }) : "";
@@ -11287,18 +11295,31 @@ function unresolvedLine(item) {
       return { label: "", text: item.text ?? "" };
   }
 }
+var doingOf2 = (item) => {
+  if (item.switching) return t("Moving on to a fresh part");
+  if (item.tool === void 0) return item.text || t("Working");
+  return item.target ? t("Running {tool} on {target}", { tool: item.tool, target: item.target }) : t("Running {tool}", { tool: item.tool });
+};
 function activeLine(item, roster) {
   switch (item.kind) {
-    case "turn": {
-      const doing = item.switching ? t("Moving on to a fresh part") : item.tool ? item.target ? t("Running {tool} on {target}", { tool: item.tool, target: item.target }) : t("Running {tool}", { tool: item.tool }) : item.text || t("Working");
-      return { label: t("Working now"), text: [doing, where(roster, item)].filter(Boolean).join(" ") };
-    }
+    case "turn":
+      return { label: t("Working now"), text: [doingOf2(item), where(roster, item)].filter(Boolean).join(" ") };
     case "order":
       return { label: t("Order"), text: t("From {name}", { name: nameOf(roster, item.from) }) };
     case "waiting":
       return { label: t("Waiting on"), text: [...item.bots, ...item.rooms].map((id) => nameOf(roster, id)).join(", ") };
     default:
       return { label: "", text: item.text ?? "" };
+  }
+}
+function operatorLine(item, roster) {
+  switch (item.kind) {
+    case "ask":
+      return { label: t("Your ask"), text: doingOf2(item) };
+    case "relay":
+      return { label: t("Relayed by {name}", { name: item.via ?? t("a teammate") }), text: doingOf2(item) };
+    default:
+      return activeLine(item, roster);
   }
 }
 function TaskList({ title, items, line, roster, empty }) {
@@ -11326,14 +11347,24 @@ function TaskList({ title, items, line, roster, empty }) {
 function OperatorTasks({ bot, roster }) {
   const tasks = operatorTasksOf(roster, bot.id);
   return [
+    (0, import_react22.createElement)(TaskList, { key: "operator", title: t("Operator Tasks"), items: tasks.operator, line: operatorLine, roster, empty: t("Nothing of yours in hand.") }),
     (0, import_react22.createElement)(TaskList, { key: "active", title: t("Active Tasks"), items: tasks.active, line: activeLine, roster, empty: t("Nothing running right now.") }),
     (0, import_react22.createElement)(TaskList, { key: "unresolved", title: t("Unresolved Tasks"), items: tasks.unresolved, line: unresolvedLine, roster, empty: t("Nothing waiting on you.") })
   ];
 }
-function UnresolvedBadge({ count }) {
-  if (!(count > 0)) return null;
-  const label = count === 1 ? t("1 task waits on you") : t("{count} tasks wait on you", { count });
-  return (0, import_react22.createElement)("span", { className: "bt-pill-tasks", title: label, "aria-label": label }, count > 99 ? "99+" : String(count));
+var capped = (count) => count > 99 ? "99+" : String(count);
+function OperatorBadge({ operator, unresolved }) {
+  const yours = operator > 0 ? operator : 0;
+  const waiting = unresolved > 0 ? unresolved : 0;
+  if (yours === 0 && waiting === 0) return null;
+  const label = waiting === 0 ? yours === 1 ? t("1 task from you") : t("{count} tasks from you", { count: yours }) : yours === 0 ? waiting === 1 ? t("1 task waits on you") : t("{count} tasks wait on you", { count: waiting }) : t("{yours} from you, {waiting} waiting on you", { yours, waiting });
+  return (0, import_react22.createElement)(
+    "span",
+    { className: "bt-pill-tasks", title: label, "aria-label": label },
+    (0, import_react22.createElement)("span", { className: "bt-pill-yours" }, capped(yours)),
+    (0, import_react22.createElement)("span", { className: "bt-pill-dot", "aria-hidden": true }, "·"),
+    (0, import_react22.createElement)("span", { className: "bt-pill-waiting" }, capped(waiting))
+  );
 }
 var OPERATOR_TASKS_CSS = `
 .bt-ops-empty{font-size:12px;line-height:16px;color:var(--bt-ink-3);padding:2px 0}
@@ -11344,7 +11375,10 @@ var OPERATOR_TASKS_CSS = `
 .bt-ops-age{flex:none;font-size:11px;line-height:16px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
 .bt-ops-text{font-size:12px;line-height:16px;color:var(--bt-ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .bt-ops-note{font-size:11px;line-height:15px;color:var(--bt-ink-3);margin-top:2px}
-.bt-pill-tasks{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--bt-danger);color:var(--bt-main);font-size:11px;line-height:18px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
+.bt-pill-tasks{flex:none;display:inline-flex;align-items:center;gap:3px;height:18px;padding:0 6px;border-radius:999px;background:var(--bt-hover);font-size:11px;line-height:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.bt-pill-yours{color:var(--bt-accent)}
+.bt-pill-waiting{color:var(--bt-danger)}
+.bt-pill-dot{color:var(--bt-ink-3);font-weight:400}
 `;
 
 // src/client/header.js
@@ -11460,7 +11494,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
       (0, import_react23.createElement)("span", { className: "bt-pill-goal" }, (0, import_react23.createElement)("span", { className: "bt-pill-ico", "aria-hidden": true }, (0, import_react23.createElement)(GoalIcon)), (0, import_react23.createElement)("span", { className: "bt-pill-title" }, view.title)),
       (0, import_react23.createElement)("span", { className: "bt-pill-name" }, name)
     ) : (0, import_react23.createElement)("span", { className: "bt-pill-name" }, away ? t("Back to chat") : bot?.name ?? room2?.name ?? (title || t("New chat"))),
-    bot && !away ? (0, import_react23.createElement)(UnresolvedBadge, { count: unresolvedCount(roster, bot.id) }) : null,
+    bot && !away ? (0, import_react23.createElement)(OperatorBadge, { operator: operatorCount(roster, bot.id), unresolved: unresolvedCount(roster, bot.id) }) : null,
     goalShown && view?.number !== void 0 ? (0, import_react23.createElement)("span", { className: "bt-pill-count" }, `${view.number}/${view.count}`) : null,
     (0, import_react23.createElement)(MemoryNotice, { shown: memoryNotice }),
     (0, import_react23.createElement)("span", { className: "bt-pill-go", "aria-hidden": true }, (0, import_react23.createElement)(GoArrow))
