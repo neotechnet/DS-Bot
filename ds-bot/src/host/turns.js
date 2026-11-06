@@ -28,6 +28,9 @@ export function turnFailure(error) {
     message,
     ...(typeof error?.status === 'number' ? { status: error.status } : {}),
     ...(typeof error?.requestId === 'string' ? { requestId: error.requestId } : {}),
+    // Kept so a turn failure can name its own line in the diagnostics log. A provider
+    // error has no stack worth keeping, and AUTH already dropped its message.
+    ...(code !== 'AUTH' && typeof error?.stack === 'string' ? { stack: error.stack } : {}),
   }
 }
 
@@ -571,6 +574,7 @@ export function install(rt) {
       code: failure.code,
       status: failure.status,
       requestId: failure.requestId,
+      stack: failure.stack,
       bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : 'unknown Bot'),
       where: placeOf(id),
       sessionId: id,
