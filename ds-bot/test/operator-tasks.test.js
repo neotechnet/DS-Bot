@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { install, openDecisions } from '../src/host/operator-tasks.js'
+import { install as installTurns } from '../src/host/turns.js'
+import { SOURCE_KIND } from '../src/host/constants.js'
 
 const line = record => JSON.stringify(record)
 
@@ -76,6 +78,7 @@ test('operatorTasksView sorts each source onto the right Bot and list', () => {
     assert.equal(view.coder.unresolved.find(item => item.kind === 'question').roomId, 'room-1')
 
     // Active: the running turn and the order from Igor; the Bot's own and group work are not orders.
+    assert.deepEqual(view.coder.operator, [])
     assert.deepEqual(view.coder.active.map(item => item.kind), ['order', 'turn'])
     assert.equal(view.coder.active[0].from, 'chief')
     assert.deepEqual(view.chief.active.map(item => item.kind), ['waiting'])
@@ -86,6 +89,105 @@ test('operatorTasksView sorts each source onto the right Bot and list', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('work the user started is in Operator Tasks, and the order for it stands back', () => {
+  const rt = fakeRuntime({
+    looseEnds: false,
+    state: {
+      works: {
+        w1: { from: 'chief', to: 'coder', origin: 'operator', open: [], results: [], at: 90 },
+        w2: { from: 'chief', to: 'coder', open: [], results: [], at: 80 },
+      },
+    },
+    work: {
+      coder: { since: 100, tool: 'pwsh', work: 'w1', origin: 'operator', originFrom: 'Igor', ask: 'Add the panel' },
+      chief: { since: 110, said: 'Reading the repo' },
+    },
+    waiting: { coder: { bots: ['chief'], rooms: [], for: ['chief'] } },
+  })
+  const view = rt.operatorTasksView()
+
+  // The relayed turn and the wait for the Bot it handed on are the operator's job.
+  assert.deepEqual(view.coder.operator.map(item => item.kind), ['waiting', 'relay'])
+  assert.equal(view.coder.operator[1].via, 'Igor')
+  assert.equal(view.coder.operator[1].text, 'Add the panel')
+  assert.equal(view.coder.operator[1].at, 100)
+
+  // The order the turn is already doing stands back; the one the user did not start stays Active.
+  assert.deepEqual(view.coder.active.map(item => item.kind), ['order'])
+  assert.equal(view.coder.active[0].from, 'chief')
+  assert.deepEqual(view.chief.active.map(item => item.kind), ['turn'])
+
+  // No job appears in both lists.
+  const keys = list => new Set(list.map(item => item.key))
+  const inOperator = keys(view.coder.operator)
+  assert.equal([...keys(view.coder.active)].some(key => inOperator.has(key)), false)
+})
+
+// The host records the origin on the running turn (turns.js), so the details panel and
+// the header badge can tell the user's own asks apart from the team's work.
+function turnHost({ works = {} } = {}) {
+  let listener
+  const rt = {
+    ctx: { on: (name, fn) => { if (name === 'session/event') listener = fn } },
+    config: { looseEnds: false },
+    state: { exchangeTurns: {}, questions: {}, views: {}, secretRequests: {}, works, bots: { b: { id: 'b', name: 'Writer' } } },
+    isBotSession: () => true,
+    roomOf: () => undefined,
+    groupOwners: new Map(),
+    chatOwners: new Map([['b', 'b']]),
+    botOf: id => ({ b: { id: 'b', name: 'Writer' } })[id],
+    selfOf: id => id,
+    chatOf: id => id,
+    save: async () => {},
+    deliver: async () => {},
+    userWrote() {},
+    userAnswered() {},
+    noteFailure() {},
+    warn() {},
+    switchJobs: () => [],
+    approvalsView: () => [],
+  }
+  installTurns(rt)
+  install(rt)
+  let seq = 0
+  const emit = (id, type, data) => listener({ id }, { type, seq: ++seq, data })
+  return { rt, emit }
+}
+
+const textBlock = text => [{ type: 'text', text }]
+const relay = (extra = {}) => ({ kind: SOURCE_KIND, form: 'relay', role: 'request', senderName: 'Igor', exchangeId: 'e1', ...extra })
+
+test('a turn the user starts is an Operator Task until its reply', () => {
+  const { rt, emit } = turnHost()
+  emit('b', 'turn/start', { turn: 1 })
+  emit('b', 'user/message', { content: textBlock('Add the panel'), source: { kind: 'user' } })
+  assert.equal(rt.workView().b.origin, 'operator')
+  assert.equal(rt.workView().b.ask, 'Add the panel')
+  assert.equal(rt.operatorTasksView().b.operator[0].kind, 'ask')
+
+  // The reply ends the job: it leaves Operator Tasks.
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  assert.equal(rt.workView().b, undefined)
+  assert.deepEqual(rt.operatorTasksView().b?.operator ?? [], [])
+})
+
+test('a relayed turn carries the operator origin, and a plain team job does not', () => {
+  const { rt, emit } = turnHost()
+  emit('b', 'turn/start', { turn: 1 })
+  emit('b', 'user/message', { content: textBlock('[Message from Igor]\nrun the checks'), source: relay({ origin: 'operator' }) })
+  assert.equal(rt.workView().b.origin, 'operator')
+  assert.equal(rt.workView().b.originFrom, 'Igor')
+  assert.equal(rt.operatorTasksView().b.operator[0].kind, 'relay')
+  emit('b', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+
+  // The same request without the origin is the team's own work.
+  emit('b', 'turn/start', { turn: 2 })
+  emit('b', 'user/message', { content: textBlock('[Message from Igor]\nlook at this'), source: relay({ exchangeId: 'e2' }) })
+  assert.equal(rt.workView().b.origin, undefined)
+  assert.deepEqual(rt.operatorTasksView().b?.operator ?? [], [])
+  assert.equal(rt.operatorTasksView().b.active[0].kind, 'turn')
 })
 
 test('a missing register leaves the decisions empty and the rest intact', () => {

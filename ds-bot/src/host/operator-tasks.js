@@ -1,7 +1,8 @@
-// Operator tasks: per Bot, what waits on the user (Unresolved) and what the Bot is
-// working on (Active). Built only from sources the host already keeps, plus the
-// operator's loose-ends register, which this module reads and never writes.
-// Git, CI and merges reach none of these sources, so no text filter is needed.
+// Operator tasks: per Bot, what the user asked it to do (Operator), what it works on for
+// anyone else (Active), and what waits on the user (Unresolved). Built only from sources
+// the host already keeps, plus the operator's loose-ends register, which this module
+// reads and never writes. Git, CI and merges reach none of these sources, so no text
+// filter is needed.
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -86,7 +87,7 @@ export function install(rt) {
     const view = {}
     const entryOf = (botId) => {
       if (botId === undefined || state.bots?.[botId] === undefined) return undefined
-      return (view[botId] ??= { active: [], unresolved: [] })
+      return (view[botId] ??= { operator: [], active: [], unresolved: [] })
     }
     const add = (botId, list, item) => { entryOf(botId)?.[list].push(item) }
 
@@ -115,20 +116,57 @@ export function install(rt) {
       add(byName.get(owner), 'unresolved', { kind: 'decision', key: `decision:${id}`, id, ...rest })
     }
 
+    // The operator's ask, directly or through a manager Bot (turns.js marks it): what
+    // the Bot works on for the user goes in Operator Tasks, the rest in Active Tasks.
+    const runningWork = new Map()
     for (const [botId, work] of Object.entries(rt.workView?.() ?? {})) {
-      add(botId, 'active', { kind: 'turn', key: 'turn', at: work.since, ...(work.tool ? { tool: work.tool } : {}), ...(work.target ? { target: work.target } : {}), ...(work.said ? { text: clip(work.said, 160) } : {}), ...(work.switching ? { switching: true } : {}), ...(work.roomId ? { roomId: work.roomId } : {}) })
+      const operator = work.origin === 'operator'
+      if (work.work !== undefined) runningWork.set(botId, work.work)
+      const text = operator ? work.ask ?? work.said : work.said
+      add(botId, operator ? 'operator' : 'active', {
+        kind: operator ? (work.originFrom ? 'relay' : 'ask') : 'turn',
+        key: 'turn',
+        at: work.since,
+        ...(text ? { text: clip(text, 160) } : {}),
+        ...(operator && work.originFrom ? { via: work.originFrom } : {}),
+        ...(work.tool ? { tool: work.tool } : {}),
+        ...(work.target ? { target: work.target } : {}),
+        ...(work.switching ? { switching: true } : {}),
+        ...(work.roomId ? { roomId: work.roomId } : {}),
+      })
     }
     for (const [id, work] of Object.entries(state.works ?? {})) {
       if (work?.to === undefined || work.from === undefined || work.to === work.from) continue
-      add(work.to, 'active', { kind: 'order', key: `order:${id}`, from: work.from, at: work.at })
+      // The running turn already says this job is being done, so the order stands back.
+      if (runningWork.get(work.to) === id) continue
+      add(work.to, work.origin === 'operator' ? 'operator' : 'active', { kind: 'order', key: `order:${id}`, from: work.from, at: work.at })
+    }
+    // A Bot waiting on another Bot for the user's job is still the user's job: the open
+    // work it holds from or for the operator says so, and when that work began.
+    const operatorWorkOf = (botId) => {
+      let at
+      let operator = false
+      for (const work of Object.values(state.works ?? {})) {
+        if (work?.origin !== 'operator' || (work.to !== botId && work.from !== botId)) continue
+        operator = true
+        if (work.at !== undefined && (at === undefined || work.at < at)) at = work.at
+      }
+      return { operator, at }
     }
     for (const [botId, waiting] of Object.entries(rt.waitingView?.() ?? {})) {
-      add(botId, 'active', { kind: 'waiting', key: 'waiting', bots: waiting.bots ?? [], rooms: waiting.rooms ?? [] })
+      const own = operatorWorkOf(botId)
+      add(botId, own.operator ? 'operator' : 'active', {
+        kind: 'waiting',
+        key: 'waiting',
+        bots: waiting.bots ?? [],
+        rooms: waiting.rooms ?? [],
+        ...(own.operator && own.at !== undefined ? { at: own.at } : {}),
+      })
     }
 
     // Oldest first: what has waited longest sits on top.
     for (const entry of Object.values(view)) {
-      for (const list of [entry.active, entry.unresolved]) list.sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
+      for (const list of [entry.operator, entry.active, entry.unresolved]) list.sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
     }
     return view
   }

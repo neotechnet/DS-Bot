@@ -94,13 +94,18 @@ export function install(rt) {
   // (or a turn picked up again) goes on with.
   const workOf = info => (info === undefined ? undefined
     : info.role === 'request' && info.audience !== 'user' ? info.exchangeId : info.work)
+  // Where the work came from, for the operator's task lists (turns.js, operator-tasks.js).
+  const workOrigin = id => (id === undefined ? undefined : works()[id]?.origin)
 
   // `parent`: the work the sender was doing when it sent this one. `child`: the
   // session id of the subagent a run of this work belongs to — the run, not the
   // child, is the sub-work, so a child that is continued hands up a result per run.
   function openWork(id, { from, to, parent, fromRoom, room, name, child }) {
     const above = parent === undefined ? undefined : works()[parent]
-    works()[id] = { ...(from ? { from } : {}), ...(to ? { to } : {}), ...(room ? { room } : {}), ...(above ? { parent } : {}), ...(fromRoom ? { fromRoom } : {}), ...(name ? { name } : {}), ...(child ? { child } : {}), open: [], results: [], at: Date.now() }
+    // The job remembers where it came from: the work it belongs to, else the turn its
+    // sender is running. Saved with the rest, so a restart keeps the Operator Task.
+    const origin = above?.origin ?? (rt.operatorTurnOf?.(from) !== undefined ? 'operator' : undefined)
+    works()[id] = { ...(from ? { from } : {}), ...(to ? { to } : {}), ...(room ? { room } : {}), ...(above ? { parent } : {}), ...(fromRoom ? { fromRoom } : {}), ...(name ? { name } : {}), ...(child ? { child } : {}), ...(origin ? { origin } : {}), open: [], results: [], at: Date.now() }
     if (above !== undefined) above.open.push(id)
     save()
   }
@@ -362,5 +367,5 @@ export function install(rt) {
     return lines.join('; ')
   }
 
-  Object.assign(rt, { workOf, openWork, closeWork, dropWork, takenWork: taken, lateWork, answerMissed, ownsWork: owns, waitsWork: waits, holdWork: hold, workAsker: askedBy, answerText, upstreamOf, sameWork, forgetBotWork: forgetBot, statusOf, waitingView, settleSubWork, subWorkRun, nameSubWork })
+  Object.assign(rt, { workOf, workOrigin, openWork, closeWork, dropWork, takenWork: taken, lateWork, answerMissed, ownsWork: owns, waitsWork: waits, holdWork: hold, workAsker: askedBy, answerText, upstreamOf, sameWork, forgetBotWork: forgetBot, statusOf, waitingView, settleSubWork, subWorkRun, nameSubWork })
 }
