@@ -8,9 +8,15 @@
 // PLAN-APPROVED turns the sub-agent's plan mode off with no card.
 //
 // What stays open: a Main Bot's own cards, every turn the user typed, a request
-// whose audience is the user, a card whose option is the production approval
-// (the production guard only reads the transcript of the Bot that runs the
-// command), and a job whose text carries CARD-IT-YOURSELF.
+// whose audience is the user, and a job whose text carries CARD-IT-YOURSELF. A
+// card whose option is the production approval is never opened by that token:
+// deploy approval always goes back to the manager, who cards Steve and mints the
+// approval for the Bot that runs the merge. Interactive show_view cards follow
+// the same rules as ask_user. Every card decided in a Bot's Session is logged
+// with the reason that decided it.
+//
+// A plan release (PLAN-APPROVED, an ORDER line) is honoured from a Main Bot, or
+// from the admin of a group the receiving Bot is a member of.
 //
 // DSH_CARD_GATE=off turns all of it off.
 
@@ -45,42 +51,92 @@ export const planTitle = (plan) => {
 const senderOf = (rt, info) => rt.botOf?.(info?.senderSessionId)?.name ?? info?.senderName ?? 'the Bot that sent this job'
 
 /**
- * The gate's view of the turn running in a Session: undefined when the turn is not
- * one a Bot opened (no gate), else who runs it, who sent it, and whether it may card.
+ * Why the turn running in a Session is or is not gated: `reason` is gate-off,
+ * not-bot-turn, main-bot, audience-user or gated; a gated turn also carries who
+ * runs it, who sent it, and whether it may card.
  */
-export function gatedTurn(rt, sessionId) {
-  if (!gateOn()) return undefined
+export function turnGate(rt, sessionId) {
+  if (!gateOn()) return { reason: 'gate-off' }
   const { state } = rt
   const entry = rt.live?.get(sessionId)
   const turn = entry?.turn
-  if (turn === undefined || !(state.exchangeTurns?.[sessionId] ?? []).includes(turn)) return undefined
+  if (turn === undefined || !(state.exchangeTurns?.[sessionId] ?? []).includes(turn)) return { reason: 'not-bot-turn' }
   const botId = rt.chatOwners?.get(sessionId)
-  if (botId === undefined || rt.isMain?.(botId)) return undefined
+  if (botId === undefined) return { reason: 'not-bot-turn' }
+  if (rt.isMain?.(botId)) return { reason: 'main-bot' }
   const info = entry.info
   // A request the user sees answered here is the user's turn as much as the Bot's.
-  if (info?.audience === 'user') return undefined
+  if (info?.audience === 'user') return { reason: 'audience-user' }
   const triggers = [{ info, text: entry.infoText }, ...(entry.joined ?? [])]
   const texts = triggers.flatMap(({ info: item, text }) => {
     const record = (state.exchanges ?? []).find(other => other.id === item?.exchangeId)
     return [text, record?.text].filter(value => typeof value === 'string')
   })
   return {
+    reason: 'gated',
     bot: rt.botOf?.(botId)?.name ?? botId,
     manager: senderOf(rt, info),
     cardItYourself: texts.some(text => text.includes(CARD_IT_YOURSELF)),
   }
 }
 
+/** The gated turn (see turnGate), or undefined when the gate does not apply. */
+export function gatedTurn(rt, sessionId) {
+  const gate = turnGate(rt, sessionId)
+  if (gate.reason !== 'gated') return undefined
+  const { reason: _reason, ...gated } = gate
+  return gated
+}
+
 export const cardRefusal = manager => `This job came from ${manager}. Do not card Steve: end your turn with a DECISION block for ${manager} (question, 2 to 4 options, the recommended one marked with its reason, Hold). ${manager} cards Steve and relays his answer.`
 
 export const planRefusal = manager => `This job came from ${manager}. Do not open a plan review for Steve here: send the full plan to ${manager} as a DECISION (Approve plan (Recommended) / Change it / Hold). When ${manager} relays approval with ${PLAN_APPROVED}, plan mode turns off for you.`
 
+export const productionRefusal = manager => `This job came from ${manager}. A deploy approval never goes to Steve from here: send the deploy DECISION to ${manager}, naming the repo and the PR as #N. ${manager} cards Steve and mints the approval; then run gh pr merge <n> --repo <owner/name> alone.`
+
+/**
+ * How the gate decides a card in this Session: `allowed`, `because` (the reason
+ * that decided it), the production label when one is offered, who runs the turn
+ * and who sent it, and the refusal text when it is refused.
+ */
+export function judgeCard(rt, sessionId, options) {
+  const label = (options ?? []).map(option => option?.label).find(isProductionLabel)
+  const gate = turnGate(rt, sessionId)
+  const botId = rt.chatOwners?.get(sessionId)
+  const named = { bot: gate.bot ?? rt.botOf?.(botId)?.name ?? botId ?? sessionId, ...(gate.manager !== undefined ? { manager: gate.manager } : {}), ...(label !== undefined ? { label } : {}) }
+  if (gate.reason !== 'gated') return { allowed: true, because: gate.reason, ...named }
+  if (label !== undefined) return { allowed: false, because: 'production-label', ...named, text: productionRefusal(gate.manager) }
+  if (gate.cardItYourself) return { allowed: true, because: 'card-it-yourself', ...named }
+  return { allowed: false, because: 'gated', ...named, text: cardRefusal(gate.manager) }
+}
+
 /** Whether ask_user in this Session is refused; the refusal text, or undefined. */
 export function refuseCard(rt, sessionId, options) {
-  const gated = gatedTurn(rt, sessionId)
-  if (gated === undefined || gated.cardItYourself) return undefined
-  if ((options ?? []).some(option => isProductionLabel(option?.label))) return undefined
-  return { ...gated, text: cardRefusal(gated.manager) }
+  const judged = judgeCard(rt, sessionId, options)
+  return judged.allowed ? undefined : judged
+}
+
+/** The labels a view offers the user, read from its options, confirm and submit parts. */
+export function viewLabels(view) {
+  const labels = []
+  const walk = (node, depth = 0) => {
+    if (depth > 8 || node === null || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const item of node) walk(item, depth + 1); return }
+    if (node.type === 'options') for (const option of node.options ?? []) labels.push({ label: String(option?.label ?? '') })
+    if (node.type === 'confirm') labels.push({ label: String(node.confirmLabel ?? '') })
+    if (node.type === 'submit') labels.push({ label: String(node.label ?? '') })
+    if (node.type === 'form') labels.push({ label: String(node.submitLabel ?? '') })
+    for (const child of node.children ?? []) walk(child, depth + 1)
+  }
+  walk(view)
+  return labels
+}
+
+/** Logs a card decision, so an allowed card can be traced as well as a refused one. */
+export function logCard(rt, tool, judged, title) {
+  if (!gateOn()) return
+  const { text: _text, ...entry } = judged
+  void logGate(rt, { ...entry, tool, title: String(title ?? '') })
 }
 
 /** Whether exit_plan_mode in this Session is refused; the refusal text, or undefined. */
@@ -133,10 +189,12 @@ export function relayPlanApproval(rt, { fromId, toId, agent, text }) {
   const kind = releaseKind(text)
   if (kind === undefined) return undefined
   const log = (outcome) => {
-    void logGate(rt, { bot: rt.botOf?.(toId)?.name ?? toId, manager: rt.botOf?.(fromId)?.name ?? fromId ?? 'unknown', tool: kind, outcome })
+    void logGate(rt, { bot: rt.botOf?.(toId)?.name ?? toId, manager: rt.botOf?.(fromId)?.name ?? fromId ?? 'unknown', tool: kind, outcome, ...(authority !== undefined ? { authority } : {}) })
   }
+  let authority
   if (fromId !== undefined && fromId === toId) { log('self'); return undefined }
-  if (fromId === undefined || !rt.isMain?.(fromId)) { log('sender-not-main'); return undefined }
+  authority = releaseAuthority(rt, fromId, toId)
+  if (authority === undefined) { log('sender-not-manager'); return undefined }
   const planMode = planModeFor(rt, agent)
   if (planMode === undefined || agent === undefined) { log('no-plan-service'); return undefined }
   let outcome
@@ -151,6 +209,19 @@ export function relayPlanApproval(rt, { fromId, toId, agent, text }) {
   }
   log(outcome)
   return outcome
+}
+
+/**
+ * Who may release a Bot's plan mode: 'main' for a Main Bot, 'group-admin' for the
+ * admin of a group the receiving Bot is a member of (a group admin is the manager
+ * Steve's routing names for that group's work), else undefined.
+ */
+export function releaseAuthority(rt, fromId, toId) {
+  if (fromId === undefined) return undefined
+  if (rt.isMain?.(fromId)) return 'main'
+  const rooms = Object.values(rt.state?.rooms ?? {})
+  if (rooms.some(room => room?.admin === fromId && (room.members ?? []).includes(toId))) return 'group-admin'
+  return undefined
 }
 
 /**
@@ -218,5 +289,5 @@ export function ensurePlanOff(rt, agent, why, { fresh = false } = {}) {
 /** One line at start-up, so the log proves this code is the code that is running. */
 export function announceGate(rt) {
   if (!gateOn()) return Promise.resolve()
-  return logGate(rt, { tool: 'gate-loaded', release: 'plan-approved+order', orderRelease: orderReleaseOn(), planDefaultOff: planDefaultOffOn(), lookup: 'agentPresets.serviceFor' })
+  return logGate(rt, { tool: 'gate-loaded', release: 'plan-approved+order', releaseFrom: 'main+group-admin', cards: 'judged+logged', orderRelease: orderReleaseOn(), planDefaultOff: planDefaultOffOn(), lookup: 'agentPresets.serviceFor' })
 }

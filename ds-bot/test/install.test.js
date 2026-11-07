@@ -75,6 +75,9 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: Bot compaction',
     'on agent/created',
     'on agent/pre-step (prepend)',
+    // local: the step-failure recorder (parts.js, 2026-11-05) wraps the chain, so
+    // it registers after the parts listener and prepends ahead of it.
+    'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
     'on agent/request-error (prepend)',

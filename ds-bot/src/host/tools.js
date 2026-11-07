@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
-import { EXIT_PLAN_MODE, logGate, planTitle, refuseCard, refusePlan } from './card-gate.js'
+import { EXIT_PLAN_MODE, judgeCard, logCard, logGate, planTitle, refusePlan, viewLabels } from './card-gate.js'
 import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { within } from './folders.js'
 import { absoluteLinks } from './links.js'
@@ -692,11 +692,9 @@ export function install(rt) {
         .slice(0, 6)
       if (options.length === 0) return 'Give at least one option.'
       // A job another Bot sent is decided by that Bot, in its own chat (card-gate.js).
-      const refused = refuseCard(rt, id, options)
-      if (refused !== undefined) {
-        void logGate(rt, { bot: refused.bot, manager: refused.manager, tool: 'ask_user', title: String(args.question ?? '') })
-        return refused.text
-      }
+      const judged = judgeCard(rt, id, options)
+      logCard(rt, 'ask_user', judged, args.question)
+      if (!judged.allowed) return judged.text
       // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
       // composer dock, which takes questions without a call.
       const turn = rt.live.get(id)?.turn
@@ -770,6 +768,10 @@ Reason: ${why}` : ''}`
       if (checked.interactive && args.await_reply === false) return 'This view has controls to submit, so it waits for the user\'s answer; call show_view without await_reply: false.'
       const awaitReply = args.await_reply ?? checked.interactive
       if (!awaitReply) return 'The view is on screen.'
+      // An interactive view is a card like ask_user's, so the same gate decides it.
+      const judged = judgeCard(rt, id, viewLabels(view))
+      logCard(rt, 'show_view', judged, title)
+      if (!judged.allowed) return judged.text
       // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
       // composer dock, which takes a card without a call.
       const turn = rt.live.get(id)?.turn
@@ -901,11 +903,12 @@ Reason: ${why}` : ''}`
     const dispose = agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
       const assembled = await next()
       // DSH 0.2.2 adds the tool list after this waterfall (#814), so only an
-      // older assembly still carries tools to drop here.
+      // older assembly still carries tools to drop here. Both fields are guarded:
+      // an assembly that arrives without one is passed on as it is, never thrown on.
       return {
         ...assembled,
-        ...Array.isArray(assembled.tools) ? { tools: assembled.tools.filter(tool => !HIDDEN_TOOLS.includes(tool.name)) } : {},
-        sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)),
+        ...(Array.isArray(assembled?.tools) ? { tools: assembled.tools.filter(tool => !HIDDEN_TOOLS.includes(tool.name)) } : {}),
+        ...(Array.isArray(assembled?.sections) ? { sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)) } : {}),
       }
     })
     held.filtered = true
