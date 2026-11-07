@@ -10,6 +10,7 @@ const ZH = {
   Working: '进行中',
   'Waiting for your answer': '等你回答',
   'Waiting for {names}': '等 {names} 交回',
+  'Waiting for a teammate': '等队友交回工作',
   'Unread activity': '有未读',
   'Not read yet': '未读',
   Search: '搜索',

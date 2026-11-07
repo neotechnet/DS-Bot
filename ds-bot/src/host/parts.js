@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
+import { ensurePlanOff } from './card-gate.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
 import { parseReplies, stackReplies } from '../shared/group-replies.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
@@ -344,7 +345,11 @@ export function install(rt) {
     }
     adoptedEngines.clear()
   }, 'ds-bot: Bot compaction')
-  ctx.on('agent/created', ({ agent }) => { adoptCompaction(agent) })
+  ctx.on('agent/created', ({ agent }) => {
+    adoptCompaction(agent)
+    // A Bot Session resumed after a restart leaves the plan mode DSH pinned on it, once.
+    ensurePlanOff(rt, agent, 'resumed')
+  })
 
   // A Bot's own chat, or its Session in one group, or the group's own Session
   // (`botId === undefined`), as numbered parts, oldest first; the last one is
