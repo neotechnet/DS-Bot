@@ -275,20 +275,50 @@ export function install(rt) {
     .filter(([id, work]) => work.to !== undefined && work.open.length > 0 && !busy.has(id))
     .map(([id, work]) => ({ id, work, out: work.open.map(childId => ({ id: childId, work: works()[childId] })).filter(child => child.work !== undefined) }))
   const busyWith = sessionIds => new Set(sessionIds.map(sessionId => rt.live.get(sessionId)).filter(entry => entry?.turn !== undefined).map(entry => workOf(entry.info)).filter(Boolean))
+  // What a Bot sent from outside any work, such as its chat with the user: nothing above
+  // these holds their wait, and the sender waits until the reply closes them.
+  const sentOnOwn = () => Object.values(works())
+    .filter(work => work.to !== undefined && works()[work.parent] === undefined && rt.botOf(work.from) !== undefined && rt.botOf(work.to) !== undefined)
 
-  // Per Bot, the Bots and groups it waits for, and the Bots it does that work for.
+  // Per Bot, the Bots and groups it waits for, and the Bots it does that work for. `for`
+  // stays empty for work a Bot sent on its own, which it does for the user.
+  // local: waiting-live-only. A handed-on work counts only while the Bot it went to is
+  // still on it: running a turn, holding an approval or a part switch, with a message
+  // unread, or itself waiting on work it handed on. A work whose Bot answered some other
+  // way and went idle stays open in the books, but no longer marks the asker waiting.
+  // Whether a Bot is still on work handed to it, for the waits above. The same test
+  // drives the sidebar clock and the status line other Bots read, so the two agree.
+  const onItTest = () => {
+    const pending = held(busyWith([...rt.live.keys()]))
+    const holders = new Set(pending.filter(({ out }) => out.length > 0).map(({ work }) => work.to))
+    const approvals = new Set((rt.approvalsView?.() ?? []).map(entry => entry.botId))
+    const switching = new Set([...(rt.switchJobs?.() ?? [])].map(job => job.botId).filter(Boolean))
+    return (botId) => {
+      if (botId === undefined) return false
+      if (approvals.has(botId) || switching.has(botId) || holders.has(botId)) return true
+      const chat = rt.chatOf?.(botId)
+      const sessions = [chat, ...(rt.groupSessionsOf?.(botId) ?? [])].filter(Boolean)
+      if (sessions.some(sessionId => rt.live.get(sessionId)?.turn !== undefined)) return true
+      return chat !== undefined && (rt.unreadOf?.(chat) ?? []).length > 0
+    }
+  }
+
   function waitingView() {
     const view = {}
     const add = (list, id) => { if (id !== undefined && !list.includes(id)) list.push(id) }
-    for (const { work, out } of held(busyWith([...rt.live.keys()]))) {
-      if (out.length === 0) continue
+    const pending = held(busyWith([...rt.live.keys()]))
+    const onIt = onItTest()
+    for (const { work, out } of pending) {
+      const live = out.filter(({ work: child }) => child.room !== undefined || onIt(child.to))
+      if (live.length === 0) continue
       const entry = view[work.to] ??= { bots: [], rooms: [], for: [], waits: [] }
-      for (const { id, work: child } of out) {
+      for (const { id, work: child } of live) {
         add(child.room ? entry.rooms : entry.bots, child.room ?? child.to)
         entry.waits.push({ id, ...(child.room ? { room: child.room, name: rt.roomOf(child.room)?.name } : { to: child.to, name: nameOf(child.to) ?? child.name }) })
       }
       add(entry.for, work.from)
     }
+    for (const work of sentOnOwn()) if (onIt(work.to)) add((view[work.from] ??= { bots: [], rooms: [], for: [], waits: [] }).bots, work.to)
     return view
   }
 
@@ -414,12 +444,18 @@ export function install(rt) {
       const entry = rt.live.get(sessionId)
       lines.push(`working ${place(sessionId)} ${minutes(entry.since ?? Date.now())}${forWhom(sessionId, entry.info)}${doing(entry)}`)
     }
+    // local: waiting-live-only. Only waits on a teammate still on the work are named.
+    const onIt = onItTest()
     for (const { work, out } of held(busyWith(running))) {
       if (work.to !== botId) continue
+      const live = out.filter(({ work: child }) => child.room !== undefined || onIt(child.to))
+      if (out.length > 0 && live.length === 0) continue
       const forName = nameOf(work.from) ? `, for ${nameOf(work.from)}` : ''
-      const on = [...new Set(out.map(({ work: child }) => (child.room ? `group "${rt.roomOf(child.room)?.name ?? 'a group'}"` : child.name ?? nameOf(child.to) ?? 'a teammate')))]
+      const on = [...new Set(live.map(({ work: child }) => (child.room ? `group "${rt.roomOf(child.room)?.name ?? 'a group'}"` : child.name ?? nameOf(child.to) ?? 'a teammate')))]
       lines.push(on.length > 0 ? `waiting for ${on.join(' and ')} to hand back work${forName}` : `about to go on with work${forName}, whose results came back`)
     }
+    const sent = [...new Set(sentOnOwn().filter(work => work.from === botId && onIt(work.to)).map(work => nameOf(work.to)))]
+    if (sent.length > 0) lines.push(`waiting for ${sent.join(' and ')} to answer`)
     if (lines.length === 0) lines.push('idle')
     if (state.questions?.[chat] !== undefined) lines.push('a question card in its own chat waits for the user\'s answer')
     if (state.views?.[chat] !== undefined) lines.push('a view card in its own chat waits for the user\'s answer')
