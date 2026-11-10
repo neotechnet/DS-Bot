@@ -300,7 +300,10 @@ test('a new request joins a recovered turn and is answered in its own turn', asy
   assert.equal(delivered.some(item => item.replyTo === request.exchangeId), false, 'old work must not answer a new request')
   assert.equal(delivered[0].deferred, true)
   assert.equal(delivered[0].exchangeId, request.exchangeId)
-  assert.equal(delivered[0].text, 'A separate new request')
+  // local: hand-back pointer. The Bot read the request in this Session during the
+  // recovered turn, so the deferred delivery points at it instead of repeating it.
+  assert.equal(delivered[0].text, 'You read its text during that task; it is above in this session. Answer it now.')
+  assert.equal(delivered[0].handedBack, true)
   // A fresh turn still lets its first input claim it, rather than deferring forever.
   emit(ctx, 'b', 'turn/start', { turn: 2 })
   emit(ctx, 'b', 'user/message', message)
