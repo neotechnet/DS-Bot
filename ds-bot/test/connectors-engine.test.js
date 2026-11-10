@@ -418,6 +418,36 @@ test('connector-set offFor yields deny prefixes; empty client id keeps the token
   await assert.rejects(rt.connectorEndpoint('connector-connect', { id: 'nonexistent' }), /No such connector/)
 })
 
+test('[local] bot.mcpOffFor masks profile MCP prefixes for every Bot not on the allow list', async (t) => {
+  const home = teamHome({
+    bots: {
+      m1: { id: 'm1', sessionId: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 },
+      b2: { id: 'b2', sessionId: 'b2', name: 'Sales Overlord', role: 'Sales', instructions: '', createdAt: 2 },
+    },
+  })
+  const ctx = fakeContext()
+  const rt = createRuntime(ctx, {
+    home,
+    github: false,
+    mcpOffFor: [
+      { prefix: 'mcp__composio_vendors__', allow: ['Chief'] },
+      { prefix: 'mcp__mobbin__' },
+      { prefix: '' },
+      null,
+    ],
+  })
+  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true }) })
+  await rt.load()
+  assert.deepEqual(rt.connectorOffFor('m1'), ['mcp__mobbin__'])
+  assert.deepEqual(rt.connectorOffFor('b2'), ['mcp__composio_vendors__', 'mcp__mobbin__'])
+  // A Session that is not a Bot keeps every tool.
+  assert.deepEqual(rt.connectorOffFor('not-a-bot'), [])
+  assert.deepEqual(rt.connectorOffFor(undefined), [])
+  // Connector switches and the profile rules add up.
+  await rt.connectorEndpoint('connector-set', { id: 'notion', offFor: ['b2'] })
+  assert.deepEqual(rt.connectorOffFor('b2'), ['mcp__notion__', 'mcp__composio_vendors__', 'mcp__mobbin__'])
+})
+
 test('custom connectors get unique ids that never collide with the catalog', async (t) => {
   const home = teamHome()
   const ctx = fakeContext()

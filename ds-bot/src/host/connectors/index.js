@@ -854,6 +854,18 @@ export function install(rt) {
         if (entry.id === 'mail') prefixes.push('mail_')
         else prefixes.push(`mcp__${entry.id}__`)
       }
+      // [2026-11-10 local] Profile MCP rows (cordis root rows, not DS Bot connectors)
+      // are served to every Bot. `bot.mcpOffFor` in cordis lists { prefix, allow }:
+      // every Bot whose name is not in `allow` loses the tools under that prefix.
+      const rules = rt.config?.mcpOffFor
+      const name = botId === undefined ? undefined : rt.botOf?.(botId)?.name
+      if (Array.isArray(rules) && name !== undefined) {
+        for (const rule of rules) {
+          if (rule === null || typeof rule !== 'object' || typeof rule.prefix !== 'string' || rule.prefix === '') continue
+          const allow = Array.isArray(rule.allow) ? rule.allow : []
+          if (!allow.includes(name)) prefixes.push(rule.prefix)
+        }
+      }
       return prefixes
     },
     connectorSettleRequests: settleRequests,
