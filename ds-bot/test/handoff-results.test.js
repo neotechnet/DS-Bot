@@ -640,3 +640,26 @@ test('a fresh work with no reply still shows as waiting', async (t) => {
   const line = rt.statusOf('b')
   assert.match(line, /waiting for Tester to hand back work/, `a real wait is still named: ${line}`)
 })
+
+test('a handoff reads closed as soon as its reply arrives', async (t) => {
+  const rt = statusBench(t)
+  rt.openWork('parent', { from: 'a', to: 'b' })
+  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
+  assert.deepEqual(rt.state.works.parent.open, ['child'], 'the hand-off starts open')
+  // Writing the reply is what tells the work it is answered.
+  rt.closeWork('child', 'Tester', 'done')
+  const parent = rt.state.works.parent
+  assert.deepEqual(parent.open, [], 'the work reads closed when the reply arrives')
+  assert.equal(parent.results.length, 1, 'the reply is attached to the work')
+  assert.equal(parent.results[0].id, 'child', 'the attached reply is the one that answered')
+})
+
+test('an old ask with no answer stops labelling its sender as waiting', async (t) => {
+  const rt = statusBench(t)
+  // Asked on its own, with no work above it: the case the status line showed.
+  rt.openWork('ask', { from: 'a', to: 'b' })
+  rt.live.set('b', { turn: {} })
+  assert.ok(rt.waitingView().a !== undefined, 'a fresh ask marks its sender waiting')
+  rt.state.works.ask.at = Date.now() - 25 * 60 * 60 * 1000
+  assert.equal(rt.waitingView().a, undefined, 'an old ask stops marking its sender waiting')
+})
