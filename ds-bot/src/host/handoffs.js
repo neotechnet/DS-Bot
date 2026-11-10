@@ -16,6 +16,10 @@ const minutes = since => {
   return count < 1 ? 'for less than a minute' : `for ${count} min`
 }
 
+// How long a work with no result at all may still count as waiting. Past this the
+// reply is taken as lost, so its Bot stops showing as loaded on work that ended.
+const WAIT_CEILING_MS = 24 * 60 * 60 * 1000
+
 export function install(rt) {
   const { ctx, state } = rt
   const works = () => (state.works ??= {})
@@ -278,11 +282,24 @@ export function install(rt) {
   // Two requests from one sender belong to the same work when they were sent for it.
   const sameWork = (id, parent) => (works()[id]?.parent ?? undefined) === (works()[parent] === undefined ? undefined : parent)
 
+  // A work stops waiting when its reply has arrived, or when it has sat past the
+  // ceiling with no result at all. An open id left behind by a reply that came back
+  // another way must not make its Bot look loaded for days.
+  const arrived = (work, childId) => (work.results ?? []).some(result => result.id === childId)
+  const pastCeiling = work => Date.now() - (work.at ?? 0) > WAIT_CEILING_MS
+  const forgotten = work => (work.results ?? []).length === 0 && pastCeiling(work)
+
   // The works their Bots wait on, outside a turn that does them (`busy`): each with what
   // it handed on that has not come back yet. One that came back waits only to be read.
   const held = busy => Object.entries(works())
     .filter(([id, work]) => work.to !== undefined && work.open.length > 0 && !busy.has(id))
-    .map(([id, work]) => ({ id, work, out: work.open.map(childId => ({ id: childId, work: works()[childId] })).filter(child => child.work !== undefined) }))
+    .map(([id, work]) => ({
+      id,
+      work,
+      out: (forgotten(work) ? [] : work.open.filter(childId => !arrived(work, childId)))
+        .map(childId => ({ id: childId, work: works()[childId] }))
+        .filter(child => child.work !== undefined),
+    }))
   const busyWith = sessionIds => new Set(sessionIds.map(sessionId => rt.live.get(sessionId)).filter(entry => entry?.turn !== undefined).map(entry => workOf(entry.info)).filter(Boolean))
   // What a Bot sent from outside any work, such as its chat with the user: nothing above
   // these holds their wait, and the sender waits until the reply closes them.
