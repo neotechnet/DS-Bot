@@ -583,3 +583,83 @@ test('a continued subagent hands up each run\'s own result', async (t) => {
   assert.ok(answer.includes('SCHEDULE: Monday'), `the second run's result goes up: ${answer}`)
   assert.ok(answer.indexOf('COST: 42') < answer.indexOf('SCHEDULE: Monday'), `in run order: ${answer}`)
 })
+
+// The label a Bot shows other Bots, over a hand-off it is done with. A work whose reply
+// came back another way kept its open id, so the asker looked loaded for days.
+function statusBench(t) {
+  const { home } = bench(t)
+  const names = { a: { name: 'Chief' }, b: { name: 'Writer' }, c: { name: 'Tester' } }
+  const rt = {
+    home,
+    state: { works: {} },
+    botOf: id => names[id],
+    readOnly: () => undefined,
+    warn() {},
+    save: async () => {},
+    chatOf: id => id,
+    groupSessionsOf: () => [],
+    roomOf: () => undefined,
+    groupOwners: new Map(),
+    live: new Map(),
+    approvalsView: () => [],
+    switchJobs: () => [],
+    unreadOf: () => [],
+  }
+  installHandoffs(rt)
+  return rt
+}
+
+test('a work whose reply already arrived does not show as waiting', async (t) => {
+  const rt = statusBench(t)
+  rt.openWork('parent', { from: 'a', to: 'b' })
+  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
+  // The reply is on the work, but its open id was never taken.
+  rt.state.works.parent.results = [{ id: 'child', name: 'Tester', text: 'done', length: 4 }]
+  // The Bot it went to is running a turn, so nothing else hides the wait.
+  rt.live.set('c', { turn: {} })
+  const line = rt.statusOf('b')
+  assert.doesNotMatch(line, /to hand back work/, `an answered work is not waited on: ${line}`)
+  assert.match(line, /whose results came back/, `it says the results are back: ${line}`)
+})
+
+test('a work past the ceiling with no result stops showing as waiting', async (t) => {
+  const rt = statusBench(t)
+  rt.openWork('parent', { from: 'a', to: 'b' })
+  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
+  rt.state.works.parent.at = Date.now() - 25 * 60 * 60 * 1000
+  rt.live.set('c', { turn: {} })
+  const line = rt.statusOf('b')
+  assert.doesNotMatch(line, /to hand back work/, `a work past the ceiling is not waited on: ${line}`)
+})
+
+test('a fresh work with no reply still shows as waiting', async (t) => {
+  const rt = statusBench(t)
+  rt.openWork('parent', { from: 'a', to: 'b' })
+  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
+  rt.live.set('c', { turn: {} })
+  const line = rt.statusOf('b')
+  assert.match(line, /waiting for Tester to hand back work/, `a real wait is still named: ${line}`)
+})
+
+test('a handoff reads closed as soon as its reply arrives', async (t) => {
+  const rt = statusBench(t)
+  rt.openWork('parent', { from: 'a', to: 'b' })
+  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
+  assert.deepEqual(rt.state.works.parent.open, ['child'], 'the hand-off starts open')
+  // Writing the reply is what tells the work it is answered.
+  rt.closeWork('child', 'Tester', 'done')
+  const parent = rt.state.works.parent
+  assert.deepEqual(parent.open, [], 'the work reads closed when the reply arrives')
+  assert.equal(parent.results.length, 1, 'the reply is attached to the work')
+  assert.equal(parent.results[0].id, 'child', 'the attached reply is the one that answered')
+})
+
+test('an old ask with no answer stops labelling its sender as waiting', async (t) => {
+  const rt = statusBench(t)
+  // Asked on its own, with no work above it: the case the status line showed.
+  rt.openWork('ask', { from: 'a', to: 'b' })
+  rt.live.set('b', { turn: {} })
+  assert.ok(rt.waitingView().a !== undefined, 'a fresh ask marks its sender waiting')
+  rt.state.works.ask.at = Date.now() - 25 * 60 * 60 * 1000
+  assert.equal(rt.waitingView().a, undefined, 'an old ask stops marking its sender waiting')
+})

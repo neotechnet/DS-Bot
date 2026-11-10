@@ -16,6 +16,10 @@ const minutes = since => {
   return count < 1 ? 'for less than a minute' : `for ${count} min`
 }
 
+// How long a work with no result at all may still count as waiting. Past this the
+// reply is taken as lost, so its Bot stops showing as loaded on work that ended.
+const WAIT_CEILING_MS = 24 * 60 * 60 * 1000
+
 export function install(rt) {
   const { ctx, state } = rt
   const works = () => (state.works ??= {})
@@ -124,6 +128,9 @@ export function install(rt) {
     for (const child of Object.values(works())) if (child.parent === id) delete child.parent
     const above = works()[work.parent]
     if (above !== undefined) {
+      // The work reads closed the moment the reply is recorded, not when the Bot that
+      // asked gets round to reading it. The result below is what carries the answer up.
+      above.open = (above.open ?? []).filter(other => other !== id)
       // The whole result goes into a file of its own before the team file names it.
       const file = keepResult(id, text)
       above.results.push({ id, name, text: headOf(text, TEXT_KEPT), ...(work.child ? { child: work.child } : {}), ...(text.length > TEXT_KEPT ? { length: text.length } : {}), ...(file ? { file } : {}), at: Date.now(), ...extra })
@@ -144,8 +151,11 @@ export function install(rt) {
     let settled
     let live
     for (const [workId, work] of Object.entries(works())) {
-      for (const openId of work.open) {
-        const result = work.results?.find(result => result.id === openId)
+      const results = work.results ?? []
+      // A settled run is no longer open, so the results name it too.
+      const ids = new Set([...(work.open ?? []), ...results.map(result => result.id)])
+      for (const openId of ids) {
+        const result = results.find(item => item.id === openId)
         if ((result?.child ?? works()[openId]?.child ?? openId) !== id) continue
         if (result === undefined) live ??= { id: openId, parent: workId }
         else if (settled === undefined || (result.at ?? 0) < settled.at) settled = { id: openId, parent: workId, at: result.at ?? 0 }
@@ -225,9 +235,19 @@ export function install(rt) {
   // that goes up names it.
   function answerMissed(id) {
     for (const work of Object.values(works())) {
-      if (!work.open.includes(id)) continue
+      // A work reads closed as soon as its reply is recorded, so the result is the
+      // record that the reply belongs to it.
       const result = (work.results ?? []).find(item => item.id === id)
-      if (result !== undefined) result.failed = true
+      if (result === undefined) {
+        if (!(work.open ?? []).includes(id)) continue
+        save()
+        return
+      }
+      result.failed = true
+      // The reply never reached the asker, so the work waits again until the notice
+      // that carries the answer is read.
+      work.open ??= []
+      if (!work.open.includes(id)) work.open.push(id)
       save()
       return
     }
@@ -278,11 +298,27 @@ export function install(rt) {
   // Two requests from one sender belong to the same work when they were sent for it.
   const sameWork = (id, parent) => (works()[id]?.parent ?? undefined) === (works()[parent] === undefined ? undefined : parent)
 
+  // A work stops waiting when its reply has arrived, or when it has sat past the
+  // ceiling with no result at all. An open id left behind by a reply that came back
+  // another way must not make its Bot look loaded for days. A subagent run has no Bot
+  // to hand back, so neither rule applies to it.
+  const arrived = (work, childId) => (work.results ?? []).some(result => result.id === childId)
+  const pastCeiling = work => Date.now() - (work.at ?? 0) > WAIT_CEILING_MS
+  const forgotten = work => (work.results ?? []).length === 0 && pastCeiling(work)
+  const stillOwed = (work, childId, child) => child.to === undefined || (!arrived(work, childId) && !forgotten(work))
+
   // The works their Bots wait on, outside a turn that does them (`busy`): each with what
   // it handed on that has not come back yet. One that came back waits only to be read.
   const held = busy => Object.entries(works())
     .filter(([id, work]) => work.to !== undefined && work.open.length > 0 && !busy.has(id))
-    .map(([id, work]) => ({ id, work, out: work.open.map(childId => ({ id: childId, work: works()[childId] })).filter(child => child.work !== undefined) }))
+    .map(([id, work]) => ({
+      id,
+      work,
+      out: work.open
+        .map(childId => ({ id: childId, work: works()[childId] }))
+        .filter(child => child.work !== undefined)
+        .filter(child => stillOwed(work, child.id, child.work)),
+    }))
   const busyWith = sessionIds => new Set(sessionIds.map(sessionId => rt.live.get(sessionId)).filter(entry => entry?.turn !== undefined).map(entry => workOf(entry.info)).filter(Boolean))
   // What a Bot sent from outside any work, such as its chat with the user: nothing above
   // these holds their wait, and the sender waits until the reply closes them.
@@ -329,7 +365,9 @@ export function install(rt) {
       }
       add(entry.for, work.from)
     }
-    for (const work of sentOnOwn()) if (onIt(work.to)) add((view[work.from] ??= { bots: [], rooms: [], for: [] }).bots, work.to)
+    // An ask sent on its own marks its sender waiting only while it is recent: one
+    // whose answer never closed it must not label an idle Bot for days.
+    for (const work of sentOnOwn()) if (onIt(work.to) && !pastCeiling(work)) add((view[work.from] ??= { bots: [], rooms: [], for: [] }).bots, work.to)
     return view
   }
 
