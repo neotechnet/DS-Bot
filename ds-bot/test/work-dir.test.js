@@ -114,7 +114,7 @@ async function start({ services = {}, workspaces = [], llm, team: saved = TEAM, 
   }))).json()
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: agentOf(sessionId), name, callId: 'c1' })
   // Runs the parts check, registered last; 'next' means the step goes on.
-  const preStep = (sessionId, messages = [], step = 1) => ctx.listeners.get('agent/pre-step').at(-1)(
+  const preStep = (sessionId, messages = [], step = 1) => ctx.listeners.get('agent/pre-step').find(listener => String(listener).includes('takeOverStep'))(
     { agent: agentOf(sessionId), messages, step, signal: AbortSignal.timeout(60_000) }, async () => 'next')
   const state = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   // Waits until the Bot's own chat runs in `dir` and its move has finished.

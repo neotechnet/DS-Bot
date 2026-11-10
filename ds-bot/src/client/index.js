@@ -1,7 +1,7 @@
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
-import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
+import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession, ownedSessionIds, publishOwnedSessions } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
@@ -40,6 +40,7 @@ import { GROUP_SETTINGS_CSS } from './group-settings.js'
 import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
 import { SCHEDULE_CSS } from './schedules.js'
+import { OPERATOR_TASKS_CSS } from './operator-tasks.js'
 import { STORAGE, migrateStorage } from './storage.js'
 import { noteLeft, setUnread, sharedMap, toggleReaction } from './shared-map.js'
 import { freePriority, groupsFor, readMode, surfaceGroups, writeMode } from './surface.js'
@@ -68,6 +69,18 @@ export function apply(ctx) {
   let savedPrefs = {}
   try { savedPrefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') ?? {} } catch { savedPrefs = {} }
   const roster = createSource({ ...EMPTY_ROSTER, prefs: savedPrefs })
+  // local: sidebar-coexistence. The shell files every Session it lists; the ones this
+  // plugin owns (Bot chats and parts, group Sessions, Agent Sessions) are published
+  // here so the shell can keep them out of its own sections.
+  ctx.effect(() => {
+    const publish = () => publishOwnedSessions(window, ownedSessionIds(roster.getSnapshot()))
+    const off = roster.subscribe(publish)
+    publish()
+    return () => {
+      off()
+      publishOwnedSessions(window, [])
+    }
+  }, 'ds-bot: publish owned sessions')
   const unreadStore = sharedMap(STORAGE.unread)
   const reactionStore = sharedMap(STORAGE.reactions)
   // When each conversation was last left; a visit compares new turns against it.
@@ -198,6 +211,7 @@ export function apply(ctx) {
     const live = {}
     if (value.connectors !== undefined && JSON.stringify(value.connectors) !== JSON.stringify(current.connectors ?? [])) live.connectors = value.connectors
     if (value.capabilityStatuses !== undefined && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live.capabilityStatuses = value.capabilityStatuses
+    if (value.operatorTasks !== undefined && JSON.stringify(value.operatorTasks) !== JSON.stringify(current.operatorTasks ?? {})) live.operatorTasks = value.operatorTasks
     if (value.learning !== undefined && JSON.stringify(value.learning) !== JSON.stringify(current.learning ?? {})) live.learning = value.learning
     if (value.learningSettled !== undefined && JSON.stringify(value.learningSettled) !== JSON.stringify(current.learningSettled ?? {})) live.learningSettled = value.learningSettled
     if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
@@ -1033,6 +1047,7 @@ export function apply(ctx) {
     [MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + AGENT_CARDS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'],
     [USAGE_CSS, 'usage'],
     [SCHEDULE_CSS, 'schedules'],
+    [OPERATOR_TASKS_CSS, 'operator-tasks'],
     [FEEDBACK_CSS, 'feedback'],
     [ABOUT_CSS, 'about'],
     [MEMBER_CSS, 'members'],
@@ -1150,7 +1165,11 @@ export function apply(ctx) {
     const sync = () => {
       const list = ctx.sessions.list.getSnapshot()
       const main = Object.values(list.byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
-      const plain = isAgentSessionId(main)
+      // local: sidebar-coexistence. A Session the roster does not own was opened from the
+      // shell's own sections, so it shows as the native dsh page.
+      const snap = roster.getSnapshot()
+      const unowned = main !== undefined && !ownedSessionIds(snap).includes(main)
+      const plain = isAgentSessionId(main) || (snap.ready && unowned)
       setPlain(plain)
       if (plain) dropPanels()
       if (main === previous) return

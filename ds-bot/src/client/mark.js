@@ -98,6 +98,13 @@ function MainStar() {
     h('path', { d: 'M10 2.4l2.29 5.04 5.51.63-4.09 3.74 1.11 5.42L10 14.5l-4.82 2.73 1.11-5.42L2.2 8.07l5.51-.63z' }))
 }
 
+// local: waiting-mark. A small clock for a Bot whose handed-on work has not come back.
+function WaitIcon({ size = 9 }) {
+  return h('svg', { viewBox: '0 0 10 10', width: size, height: size, 'aria-hidden': true },
+    h('circle', { cx: 5, cy: 5, r: 3.45 }),
+    h('path', { d: 'M5 2.75v2.4l1.75 .95' }))
+}
+
 // Marks settle with a short squash when a run finishes.
 function useSettled(state) {
   const prev = useRef(state)
@@ -123,7 +130,8 @@ export function BotAvatar({ bot, size, state = 'idle', main, admin, badge = true
     badgeKind === 'working' ? h('span', { className: 'bt-badge bt-badge-working', 'aria-label': t('Working'), role: 'img' }) : null,
     badgeKind === 'alert' ? h('span', { className: 'bt-badge bt-badge-alert', 'aria-label': t('Waiting for your answer'), role: 'img' }, '?') : null,
     badgeKind === 'admin' ? h('span', { className: 'bt-badge bt-badge-admin', 'aria-label': t('Admin'), role: 'img' }, h(StarIcon)) : null,
-    badgeKind === 'main' ? h('span', { className: 'bt-badge bt-badge-main', 'aria-label': t('Main Bot'), role: 'img' }, h(MainStar)) : null)
+    badgeKind === 'main' ? h('span', { className: 'bt-badge bt-badge-main', 'aria-label': t('Main Bot'), role: 'img' }, h(MainStar)) : null,
+    badge && state === 'waiting' ? h('span', { className: 'bt-badge bt-badge-waiting', role: 'img', 'aria-label': t('Waiting for a teammate') }, h(WaitIcon)) : null)
 }
 
 // A group avatar seats its members' characters in the frame: two on a

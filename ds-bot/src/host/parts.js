@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
+import { ensurePlanOff } from './card-gate.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
 import { parseReplies, stackReplies } from '../shared/group-replies.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
@@ -347,7 +348,11 @@ export function install(rt) {
     }
     adoptedEngines.clear()
   }, 'ds-bot: Bot compaction')
-  ctx.on('agent/created', ({ agent }) => { adoptCompaction(agent) })
+  ctx.on('agent/created', ({ agent }) => {
+    adoptCompaction(agent)
+    // A Bot Session resumed after a restart leaves the plan mode DSH pinned on it, once.
+    ensurePlanOff(rt, agent, 'resumed')
+  })
 
   // A Bot's own chat, or its Session in one group, or the group's own Session
   // (`botId === undefined`), as numbered parts, oldest first; the last one is
@@ -1285,6 +1290,69 @@ export function install(rt) {
     if (!await canMakeRoom(agent, payload.messages)) return next()
     return switchBeforeStep(agent, payload, { hard: true })
   }, { prepend: true })
+
+  // [2026-11-05] A step failure used to reach the chat as a bare message: DSH reports
+  // the turn with a message and a code and no frames, so nothing named the line that
+  // threw. This wraps the rest of the chain (registered after the handler above, so
+  // `prepend` puts it first) and records the stack once per failed step. It changes
+  // nothing about the outcome: the error is rethrown exactly as it came.
+  ctx.on('agent/pre-step', async (payload, next) => {
+    try {
+      return await next()
+    } catch (error) {
+      try {
+        const sessionId = payload?.agent?.id
+        rt.noteFailure?.({
+          source: 'turn',
+          text: error?.message ?? String(error),
+          code: typeof error?.code === 'string' ? error.code : undefined,
+          stack: typeof error?.stack === 'string' ? error.stack : undefined,
+          bot: rt.botOf?.(rt.selfOf?.(sessionId))?.name,
+          where: placeOf(sessionId),
+          sessionId,
+        })
+      } catch { /* never let the reporter change the failure */ }
+      throw error
+    }
+  }, { prepend: true })
+
+  // [2026-11-05] DSH resolves the tool set and assembles the system prompt BEFORE it
+  // enters the pre-step chain, so a throw there reaches the chat as a bare message and
+  // no pre-step listener can ever see it. These two seams are the only code that runs
+  // in that window. Wrapping them records the frames once and rethrows unchanged, so
+  // nothing about behaviour moves. A seam that is missing or already wrapped is skipped.
+  const wrappedSeams = new WeakSet()
+  for (const seam of [
+    { label: 'tools.resolve', service: () => ctx.get('tools'), method: 'resolve' },
+    { label: 'systemPrompt.assemble', service: () => ctx.get('systemPrompt'), method: 'assemble' },
+  ]) {
+    try {
+      const service = seam.service()
+      const original = service?.[seam.method]
+      if (service === undefined || service === null || typeof original !== 'function' || wrappedSeams.has(service)) continue
+      wrappedSeams.add(service)
+      service[seam.method] = async function wrappedSeam(...args) {
+        try {
+          return await original.apply(this, args)
+        } catch (error) {
+          try {
+            const agent = args?.[0]?.agent ?? (args?.[0]?.session === undefined ? undefined : { id: args[0].session.id })
+            const sessionId = agent?.id ?? agent?.session?.id
+            rt.noteFailure?.({
+              source: 'turn',
+              text: `${seam.label}: ${error?.message ?? String(error)}`,
+              code: typeof error?.code === 'string' ? error.code : undefined,
+              stack: typeof error?.stack === 'string' ? error.stack : undefined,
+              bot: rt.botOf?.(rt.selfOf?.(sessionId))?.name,
+              where: 'before the pre-step chain',
+              sessionId,
+            })
+          } catch { /* never let the reporter change the failure */ }
+          throw error
+        }
+      }
+    } catch { /* a seam we cannot wrap must not stop the plugin loading */ }
+  }
 
   // `messages` left the inbox for this step, so the switch carries them along.
   function switchBeforeStep(agent, payload, options) {

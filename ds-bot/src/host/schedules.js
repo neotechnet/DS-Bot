@@ -36,6 +36,7 @@ function requestOf(record) {
   if (record.kind === 'daily') return { ...base, daily: { time: record.time, time_zone: record.timeZone } }
   if (record.kind === 'weekly') return { ...base, weekly: { time: record.time, time_zone: record.timeZone, weekdays: record.weekdays } }
   if (record.kind === 'cron') return { ...base, cron: { expression: record.expression, time_zone: record.timeZone } }
+  if (record.kind === 'rrule') return { ...base, rrule: record.rrule }
   return null
 }
 
@@ -44,7 +45,7 @@ function requestOf(record) {
 const hostWide = service => typeof service.edit === 'function'
 // The existing Session a task delivers to; a task that opens new Sessions has none.
 const sessionOf = entry => entry.target === undefined ? entry.sessionId : entry.target.kind === 'session' ? entry.target.sessionId : undefined
-const TIMING_KINDS = { at: 'at', every_seconds: 'every', daily: 'daily', weekly: 'weekly' }
+const TIMING_KINDS = { at: 'at', every_seconds: 'every', daily: 'daily', weekly: 'weekly', cron: 'cron', rrule: 'rrule' }
 const OWN_TASK_TOOLS = ['schedule_edit', 'schedule_view']
 // DSH 0.2.2's list page: 100 by default, at most 500.
 const LIST_PAGE = 100

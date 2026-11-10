@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
+import { EXIT_PLAN_MODE, judgeCard, logCard, logGate, planTitle, refusePlan, viewLabels } from './card-gate.js'
 import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { within } from './folders.js'
 import { absoluteLinks } from './links.js'
@@ -703,6 +704,10 @@ export function install(rt) {
         .filter(option => option.label !== '')
         .slice(0, 6)
       if (options.length === 0) return 'Give at least one option.'
+      // A job another Bot sent is decided by that Bot, in its own chat (card-gate.js).
+      const judged = judgeCard(rt, id, options)
+      logCard(rt, 'ask_user', judged, args.question)
+      if (!judged.allowed) return judged.text
       // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
       // composer dock, which takes questions without a call.
       const turn = rt.live.get(id)?.turn
@@ -720,6 +725,39 @@ export function install(rt) {
       await rt.save()
       exec.concludeTurn?.()
       return 'The card is on screen; the user\'s answer arrives as their next message.'
+    },
+  }))
+
+  rt.teamTools.push(defineTool({
+    name: 'void_question',
+    description: 'Main Bot only. Withdraw the question card another Bot left open for the user, when it no longer applies. The card leaves the screen, a late click on it is refused, and the Bot is told in a new turn.',
+    parameters: {
+      bot: { type: 'string', required: true, description: 'Exact Bot name from list_bots' },
+      reason: { type: 'string', description: 'Why it was voided; the Bot reads this' },
+    },
+    output,
+    async execute(args, exec) {
+      await rt.load()
+      const sender = callerBot(exec)
+      if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can void a question.')
+      const target = rt.findBot(args.bot)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      const chat = rt.chatOf(target.id)
+      const question = rt.own(state.questions, chat)
+      if (question === undefined) refuse(`${target.name} has no open question.`)
+      delete state.questions[chat]
+      await rt.save()
+      if (target.id === sender.id) return 'Your question is voided.'
+      const why = String(args.reason ?? '').trim()
+      const text = `Your question "${question.question}" is withdrawn, so no answer to it will reach you. Do not act on it.${why ? `
+Reason: ${why}` : ''}`
+      try {
+        await rt.deliver({ fromId: sender.id, toId: target.id, text, role: 'voided', ...callerRoom(exec) })
+      } catch (error) {
+        rt.warn('ds-bot: telling %s its question was voided failed: %s', target.name, error)
+        return `The question of ${target.name} is voided, but ${target.name} could not be told. Tell it with message_bot.`
+      }
+      return `The question of ${target.name} is voided and it has been told.`
     },
   }))
 
@@ -743,6 +781,10 @@ export function install(rt) {
       if (checked.interactive && args.await_reply === false) return 'This view has controls to submit, so it waits for the user\'s answer; call show_view without await_reply: false.'
       const awaitReply = args.await_reply ?? checked.interactive
       if (!awaitReply) return 'The view is on screen.'
+      // An interactive view is a card like ask_user's, so the same gate decides it.
+      const judged = judgeCard(rt, id, viewLabels(view))
+      logCard(rt, 'show_view', judged, title)
+      if (!judged.allowed) return judged.text
       // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
       // composer dock, which takes a card without a call.
       const turn = rt.live.get(id)?.turn
@@ -907,11 +949,12 @@ export function install(rt) {
     const dispose = agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
       const assembled = await next()
       // DSH 0.2.2 adds the tool list after this waterfall (#814), so only an
-      // older assembly still carries tools to drop here.
+      // older assembly still carries tools to drop here. Both fields are guarded:
+      // an assembly that arrives without one is passed on as it is, never thrown on.
       return {
         ...assembled,
-        ...Array.isArray(assembled.tools) ? { tools: assembled.tools.filter(tool => !HIDDEN_TOOLS.includes(tool.name)) } : {},
-        sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)),
+        ...(Array.isArray(assembled?.tools) ? { tools: assembled.tools.filter(tool => !HIDDEN_TOOLS.includes(tool.name)) } : {}),
+        ...(Array.isArray(assembled?.sections) ? { sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)) } : {}),
       }
     })
     held.filtered = true
@@ -1036,6 +1079,13 @@ export function install(rt) {
     if (exec.name === BLOCKING_QUESTION_TOOL) return `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
     const target = exec.arguments?.target
     if (SCHEDULE_TARGET_TOOLS.includes(exec.name) && target !== undefined && target !== 'this_session') return SCHEDULE_TARGET_REFUSAL
+    if (exec.name === EXIT_PLAN_MODE) {
+      // A plan for a job another Bot sent is approved through that Bot (card-gate.js).
+      const refused = refusePlan(rt, exec.agent?.id)
+      if (refused === undefined) return undefined
+      void logGate(rt, { bot: refused.bot, manager: refused.manager, tool: EXIT_PLAN_MODE, title: planTitle(exec.arguments?.plan) })
+      return refused.text
+    }
     return DELEGATION_TOOLS.includes(exec.name) ? DELEGATION_REFUSAL : undefined
   })
   // Creation waits for this listener, so the Agent's first step already lacks the tool.

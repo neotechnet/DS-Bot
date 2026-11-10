@@ -1,11 +1,14 @@
 // Delivery: how one Bot, the user, or DS Bot itself puts a message into a Bot Session.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { announceGate, ensurePlanOff, relayPlanApproval } from './card-gate.js'
 import { HISTORY_TIMEOUT_MS, LONG_HEAD, MESSAGE_INLINE_MAX, READ_LINE_MAX, SOURCE_KIND, TEXT_KEPT, TEXT_SHOW_MAX } from './constants.js'
 import { headOf, textOf } from './text.js'
 
 export function install(rt) {
   const { ctx, state } = rt
+  // The card gate says once that it is loaded, so its log proves which code runs.
+  void announceGate(rt)
 
   const resolveAgent = async (sessionId) => {
     const resolved = await ctx.sessionController.resolveAgent(sessionId)
@@ -29,6 +32,7 @@ export function install(rt) {
     if (resent && role !== 'room') return `[Message from ${fromName} · DeepSeek Harness restarted before it could reach you]`
     if (role === 'reply') return `[Reply from ${fromName}${goesOn}]`
     if (role === 'stopped') return `[Stopped by ${fromName}]`
+    if (role === 'voided') return `[Question voided by ${fromName}]`
     if (role === 'room') return `[Group chat "${roomName}" · ${note}]`
     if (role === 'report') return `[Group chat "${roomName}" · replies to your post${goesOn}]`
     if (role === 'kickoff') return '[Bot team setup]'
@@ -57,13 +61,22 @@ export function install(rt) {
   // length when it went as a file (attachLong). `work`: the work (handoffs.js) a
   // result that came back goes on with. `merged`: a request that takes in an earlier
   // one its recipient had not read, under that one's exchange.
-  async function deliver({ fromId, fromName: senderName, toId, sessionId, text, role, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, merged = false, abandoned = false, recordExchange = true, askedBy, fromRoomId, images = [], files = [], length, work }) {
+  // `handedBack`: this delivery is a pointer to a message the recipient already read in
+  // this Session, not the message itself (turns.js), so the dialogs read the body from
+  // the delivery that carried it.
+  async function deliver({ fromId, fromName: senderName, toId, sessionId, text, role, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, merged = false, abandoned = false, handedBack = false, recordExchange = true, askedBy, fromRoomId, images = [], files = [], length, work }) {
     const from = rt.botOf(fromId)
     const to = rt.botOf(toId)
     if (to === undefined) throw new Error(`Unknown Bot ${toId}`)
     const fromName = senderName ?? from?.name ?? 'You'
     const room = rt.roomOf(roomId)
     const asker = work === undefined ? undefined : rt.botOf(state.works?.[work]?.from)?.name
+    // A message sent while its sender works for the operator is the operator's ask, and
+    // says so on its source: each relay hop passes it on, so a job keeps its origin all
+    // the way down the team. After a restart the work it is for remembers (handoffs.js).
+    const origin = rt.operatorTurnOf?.(fromId) !== undefined
+      ? 'operator'
+      : (work === undefined ? undefined : state.works?.[work]?.origin)
     // Session events reject `undefined` members, so optional fields are omitted instead.
     const source = {
       kind: SOURCE_KIND,
@@ -71,12 +84,14 @@ export function install(rt) {
       role,
       exchangeId,
       senderName: fromName,
+      ...(origin === 'operator' ? { origin } : {}),
       ...(work ? { work } : {}),
       ...(fromId ? { senderSessionId: fromId } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(roomId ? { roomId } : {}),
       ...(audience === 'user' ? { audience } : {}),
       ...(deferred ? { deferred: true } : {}),
+      ...(handedBack ? { handedBack: true } : {}),
       ...(resumed ? { resumed: true } : {}),
       ...(retried ? { retried: true } : {}),
       ...(askedBy ? { askedBy } : {}),
@@ -96,6 +111,10 @@ export function install(rt) {
       ],
       source,
     })
+    // A Main Bot relaying a plan approval takes the Bot out of plan mode, before the
+    // message that carries it is read (card-gate.js).
+    ensurePlanOff(rt, agent, 'delivery')
+    relayPlanApproval(rt, { fromId, toId, agent, text })
     if (steer) agent.steer(message)
     else agent.followup(message)
     await ctx.sessions.flush(agent.session)
@@ -124,6 +143,9 @@ export function install(rt) {
     try {
       for await (const event of rt.eventsBackwards(entry.sessionId ?? rt.chatOf(entry.to), AbortSignal.timeout(HISTORY_TIMEOUT_MS))) {
         if (event.type !== 'user/message' || event.data?.source?.exchangeId !== entry.id) continue
+        // A hand-back carries a pointer, not the message; the delivery that brought it is
+        // further back and is what the dialog shows.
+        if (event.data.source.handedBack === true) continue
         const delivered = textOf(event.data.content)
         const text = delivered.slice(delivered.indexOf('\n') + 1)
         return { text: headOf(text, TEXT_SHOW_MAX), whole: text.length <= TEXT_SHOW_MAX }

@@ -1,10 +1,76 @@
 // The Claude Code engine: one process per session, stream-json both ways.
 // stdin takes user/control JSON messages; stdout streams the assistant's
 // events until a `result` ends the turn.
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { cleanEnv, spawnAgent } from './discover.js'
 
 // Claude Code tools that only read; the rest may change files or run something.
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch', 'TodoWrite', 'NotebookRead'])
+
+// Windows allows 32,767 characters for a process's whole command line and Node
+// throws ENAMETOOLONG a little above that, before the process starts. A Bot's
+// assembled system prompt alone can be 40 KB, so it travels in a file and only
+// its path is an argument. The cap here sits below Windows' own so a failure
+// names the offending flag instead of surfacing "spawn ENAMETOOLONG".
+const COMMAND_LINE_LIMIT = 30_000
+const SYSTEM_FILE_DIR = join(tmpdir(), 'dsbot-claude-system')
+const SYSTEM_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1_000
+
+// Files this process still owns, so an ordinary quit leaves none behind. A hard
+// kill runs no handler at all, which is what the age sweep below is for.
+const liveSystemFiles = new Set()
+let swept = false
+
+process.on('exit', () => {
+  for (const file of liveSystemFiles) unlinkQuietly(file)
+})
+
+function unlinkQuietly(file) {
+  liveSystemFiles.delete(file)
+  try { unlinkSync(file) } catch { /* the exit handler and close() can both reach it */ }
+}
+
+// Only a file nobody is reading is ever old enough, because a live session's
+// file is minutes old. So this cannot remove one that a CLI is about to read.
+function sweepStaleSystemFiles(now = Date.now()) {
+  if (swept) return
+  swept = true
+  let names
+  try { names = readdirSync(SYSTEM_FILE_DIR) } catch { return }
+  for (const name of names) {
+    const file = join(SYSTEM_FILE_DIR, name)
+    try {
+      if (now - statSync(file).mtimeMs > SYSTEM_FILE_MAX_AGE_MS) unlinkQuietly(file)
+    } catch { /* another session removed it first */ }
+  }
+}
+
+function writeSystemFile(sessionId, system) {
+  sweepStaleSystemFiles()
+  mkdirSync(SYSTEM_FILE_DIR, { recursive: true, mode: 0o700 })
+  const safe = String(sessionId).replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 40)
+  const file = join(SYSTEM_FILE_DIR, `${safe}-${randomUUID()}.txt`)
+  writeFileSync(file, system, { encoding: 'utf8', mode: 0o600 })
+  liveSystemFiles.add(file)
+  return file
+}
+
+// The system prompt is the only large argument today, but a custom agent's own
+// arguments could grow the same way. Failing here names which one to look at.
+function guardCommandLine(bin, args) {
+  const total = [bin, ...args].reduce((sum, part) => sum + part.length + 3, 0)
+  if (total <= COMMAND_LINE_LIMIT) return
+  let longest = 0
+  for (let index = 1; index < args.length; index += 1) if (args[index].length > args[longest].length) longest = index
+  const owner = longest > 0 && args[longest - 1].startsWith('--') ? args[longest - 1] : 'the agent arguments'
+  throw Object.assign(
+    new Error(`this agent's command line is ${total} characters and Windows allows ${COMMAND_LINE_LIMIT}; the longest argument belongs to ${owner}, so shorten it or use a file-backed form of that flag`),
+    { code: 'LOCAL_AGENT_EXIT' },
+  )
+}
 
 export class ClaudeEngine {
   constructor(route, engine, { findExecutable }) {
@@ -82,28 +148,68 @@ class ClaudeSession {
     // CLI starts an interactive session and never speaks this protocol.
     const args = [...(this.engine.engine.args ?? []), '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
     if (resumeId !== undefined) args.push('--resume', resumeId)
-    if (system !== undefined) args.push('--append-system-prompt', system)
+    // A Bot with a large instruction set puts the whole prompt on the command
+    // line under the inline flag and the process never starts, so the prompt
+    // goes to a file and only its path is an argument.
+    let systemFile
+    if (system !== undefined) {
+      // Local patch 2026-11-09 (codebots): the DSH-built prompt names the
+      // DeepSeek model; on this route the model is Claude Code's.
+      const route = `running in the Claude Code program (model: ${model ?? 'CLI default'})`
+      system = system.replace(/powered by the \S+ model/g, route)
+      try {
+        systemFile = writeSystemFile(this.dshSessionId, system)
+        args.push('--append-system-prompt-file', systemFile)
+      } catch (error) {
+        // A small prompt still starts inline, so a broken temp folder does not
+        // take away a Bot that worked before this file existed.
+        if (system.length >= COMMAND_LINE_LIMIT) throw Object.assign(
+          new Error(`the system prompt could not be written to ${SYSTEM_FILE_DIR} and is too large for the command line: ${error.message}`),
+          { code: 'LOCAL_AGENT_EXIT' },
+        )
+        args.push('--append-system-prompt', system)
+      }
+    }
+    this.systemFile = systemFile
     if (mode !== undefined) args.push('--permission-mode', mode)
     if (model !== undefined && model !== 'default') args.push('--model', model)
     // Print mode has no one to ask: without a prompt tool a call that needs
     // permission is refused outright. `stdio` sends it here as a
     // control_request, which becomes the Bot's approval card.
     args.push('--permission-prompt-tool', 'stdio')
+    // Local patch 2026-11-09 (codebots): coding bots run at high effort unless
+    // the engine sets its own, and load only the bot tools plus the
+    // work-history search, never the user's business MCP servers.
+    args.push('--effort', this.engine.engine.effort ?? 'high')
+    const mcpServers = {
+      'claude-memory-bridge': {
+        type: 'stdio',
+        command: 'C:\\Users\\SteveDempsey\\AppData\\Local\\Programs\\Python\\Python314\\python.exe',
+        args: ['C:\\Claude\\integrations\\Claude Memory Bridge\\server.py'],
+      },
+    }
+    if (mcp !== undefined) mcpServers.dsbot = { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } }
+    args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }))
     if (mcp !== undefined) {
-      args.push('--mcp-config', JSON.stringify({
-        mcpServers: { dsbot: { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } } },
-      }))
       // DS Bot's own team tools need no approval, as for a model-backed Bot:
       // toolsFor() already narrowed what this Bot may call.
       args.push('--allowedTools', 'mcp__dsbot')
     }
     this.resumeId = resumeId
-    const child = this.child = spawnAgent(bin, args, {
-      env: cleanEnv(this.engine.env ?? {}),
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    guardCommandLine(bin, args)
+    let child
+    try {
+      child = spawnAgent(bin, args, {
+        env: cleanEnv(this.engine.env ?? {}),
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+    } catch (error) {
+      if (systemFile !== undefined) unlinkQuietly(systemFile)
+      throw error
+    }
+    this.child = child
     // stderr is not part of the protocol, but it is where a CLI that cannot
     // start says why; its tail goes into the error the turn shows.
     let stderr = ''
@@ -136,6 +242,7 @@ class ClaudeSession {
     })
     child.on('error', (error) => {
       this.dead = true
+      if (systemFile !== undefined) unlinkQuietly(systemFile)
       const failure = fail(`${this.engine.engine.name} could not start: ${error.message}`)
       this.rejectStart?.(failure)
       this.rejectStart = undefined
@@ -143,6 +250,7 @@ class ClaudeSession {
     })
     child.on('exit', (code, signal) => {
       this.dead = true
+      if (systemFile !== undefined) unlinkQuietly(systemFile)
       // Claude Code deletes old conversations; resuming one that is gone exits
       // before init with this line on stderr.
       if (this.resumeId !== undefined && this.cliSessionId === undefined && /no conversation found/i.test(stderr)) this.resumeMissing = true
@@ -238,6 +346,10 @@ class ClaudeSession {
 
   kill() {
     this.dead = true
+    // The CLI read the prompt at startup and a kill ends the session, so the
+    // file cannot be needed again and is removed now rather than at exit.
+    if (this.systemFile !== undefined) unlinkQuietly(this.systemFile)
+    this.systemFile = undefined
     this.child?.kill('SIGTERM')
     setTimeout(() => { try { this.child?.kill('SIGKILL') } catch {} }, 5_000).unref?.()
     this.child = undefined
