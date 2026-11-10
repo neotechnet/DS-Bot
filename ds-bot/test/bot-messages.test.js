@@ -1103,6 +1103,74 @@ for (const id of ['b', 'gb']) {
     assert.equal(made, 2)
   })
 
+  // [2026-11-10 local] The loop seen live: a fresh part's base was taken before its first
+  // request was measured, so the tool definitions counted as growth and every new part
+  // was moved on after one turn, over and over, with nobody sending it anything.
+  test(`[local] a fresh part over the check line after one turn is not moved on (${id})`, async (t) => {
+    const { ctx, agentOf, emit, fire, stop } = await start(team({ group: true }))
+    t.after(stop)
+    let made = 0
+    let tokens = 10_000
+    ctx.sessionController.create = async () => ({ sessionId: `s${++made}` })
+    const get = ctx.get
+    ctx.get = name => name === 'tokenMeter' ? {
+      measure: () => ({ totalTokens: tokens }),
+      estimateMessage: message => estimateTokens(textOf(message.content)),
+    } : get(name)
+    // usable 400K: check line 320K (0.8 default), hard line 380K.
+    ctx.llm.resolveModelInfo = async () => ({ context: { contextWindow: 400_000 } })
+    const preStep = async (agent) => {
+      agent.session.requestHeader = () => ({ config: { provider: 'custom', model: 'model' } })
+      return ctx.listeners.get('agent/pre-step').find(listener => String(listener).includes('takeOverStep'))({ agent, messages: [], step: 1, signal: AbortSignal.timeout(60_000) }, async () => 'next')
+    }
+    // A switch runs in the background: wait long enough for one to create its part.
+    const idle = async (sessionId, until = made) => {
+      ctx.emit('agent/status', { agent: agentOf(sessionId), status: 'idle' })
+      for (let count = 0; count < 100 && made === until; count += 1) await delay(10)
+    }
+
+    // A first part moves on once (overflow), so s1 is a fresh part with a handoff.
+    emit(id, 'assistant/message', assistantText('Earlier work'))
+    await fire('agent/request-error', { agent: agentOf(id), failure: { code: 'CONTEXT_WINDOW_EXCEEDED' }, signal: AbortSignal.timeout(60_000) })
+    for (let count = 0; count < 200 && !agentOf('s1').calls.some(([, message]) => message.source?.handoff); count += 1) await delay(5)
+    const handoff = agentOf('s1').calls.find(([, message]) => message.source?.handoff)?.[1]
+    assert.ok(handoff)
+    emit('s1', 'user/message', handoff)
+    assert.equal(made, 1)
+
+    // Its first step is measured before any request header: no tools yet.
+    assert.equal(await preStep(agentOf('s1')), 'next')
+    // The first request carries the whole tool list: past the check line at once.
+    tokens = 330_000
+    // The host's notice carries the whole schedule prompt, so it is not small.
+    emit('s1', 'user/message', { source: { kind: 'user' }, content: textBlock('[SCHEDULE CHANGE] Job watch moved to this part. '.padEnd(40_000, 'p')) })
+    emit('s1', 'assistant/message', assistantText('A real reply after one turn'))
+    // Live, the steward chose "compact" and the compaction folded the handoff note into
+    // a summary, so nothing marked the part as fresh any more and it was moved on.
+    const live = agentOf('s1').session.deriveMessages()
+    live.splice(live.findIndex(message => message.source?.handoff === true), 1)
+    // A switch marks the part in state.switching as it starts. This fake has no model
+    // to write the handoff note, so a started switch is the thing to watch for.
+    const started = []
+    const switching = rt.state.switching
+    rt.state.switching = new Proxy(switching, { set(target, key, value) { started.push(key); target[key] = value; return true } })
+    await idle('s1')
+    assert.deepEqual(started, [], 'one turn in a fresh part does not start a switch')
+    assert.equal(made, 1, 'one turn in a fresh part does not move it on')
+    // Idle again with no new input: still the same part.
+    await idle('s1')
+    assert.deepEqual(started, [], 'an idle fresh part does not start a switch')
+    assert.equal(made, 1, 'an idle fresh part stays put')
+
+    // Real growth past the measured start still moves it on.
+    emit('s1', 'user/message', { source: { kind: 'user' }, content: textBlock('First real request. '.padEnd(20_000, 'a')) })
+    emit('s1', 'user/message', { source: { kind: 'user' }, content: textBlock('Second real request. '.padEnd(20_000, 'b')) })
+    emit('s1', 'assistant/message', assistantText('Long work'))
+    tokens = 330_000 + 90_000
+    await idle('s1')
+    assert.equal(made, 2, 'a part that really grew still moves on')
+  })
+
   for (const pending of [false, true]) {
     test(`a long ${pending ? 'pending' : 'admitted'} request after a handoff can recover without a model reply (${id})`, async (t) => {
       const seed = team({ group: true })

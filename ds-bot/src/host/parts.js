@@ -218,6 +218,18 @@ export function install(rt) {
     }
   }
   const tokensOf = session => measureOf(session)?.totalTokens
+  // [2026-11-10 local] User-role inputs in this part that carry work: the handoff note
+  // and the host's own schedule and handoff notices are not counted.
+  const NOTICE = /^\s*\[(SCHEDULE CHANGE|Handoff part\b)/
+  const realInputs = (session) => {
+    try {
+      return session.deriveMessages().filter(message => message.role === 'user'
+        && message.source?.handoff !== true
+        && !NOTICE.test(textOf(message.content))).length
+    } catch {
+      return Number.POSITIVE_INFINITY
+    }
+  }
   const clock = createClock(config.timeZone)
   // Replacing a handoff must shrink the request, not just create another Session.
   async function canMakeRoom(agent, carry = []) {
@@ -828,6 +840,12 @@ export function install(rt) {
   // it. A part makes room again only once it grew by a quarter of the check line past
   // it, so a large system prompt or a broken switch cannot make it act every turn.
   const partBase = new Map()
+  // [2026-11-10 local] Parts whose base was set before their first request was
+  // measured. The base is taken at the first pre-step, before the request header
+  // exists, so the tool definitions (hundreds of thousands of tokens with many
+  // MCP servers) were counted as growth after the first turn and the part was
+  // moved on at once, again and again. The first idle check re-bases these.
+  const rebase = new Set()
   // Parts whose note failed below the hard line: failures in a row, and the time
   // before which the check line does not try again.
   const noteFailures = new Map()
@@ -1273,6 +1291,7 @@ export function install(rt) {
     if (fresh !== undefined) {
       freshParts.delete(agent.id)
       partBase.set(agent.id, (tokensOf(agent.session) ?? 0) + fresh)
+      rebase.add(agent.id)
     }
     if (!readOnly() && await folderMove(agent, { midTurn: payload.step > 1 }) !== undefined) return switchBeforeStep(agent, payload, { folder: true })
     // The group's own Session moves only for its folder, never for its size: its turns
@@ -1509,8 +1528,20 @@ export function install(rt) {
     }
     const lines = await contextLines(agent.session)
     const tokens = tokensOf(agent.session)
+    // [2026-11-10 local] The first idle check of a fresh part measures the request it
+    // really sent (system prompt and tools included) and takes that as the base.
+    if (rebase.has(agent.id) && tokens !== undefined && lines !== undefined) {
+      rebase.delete(agent.id)
+      if (tokens < lines.hard) {
+        partBase.set(agent.id, Math.max(partBase.get(agent.id) ?? 0, tokens))
+        return
+      }
+    }
     if (lines === undefined || tokens === undefined || tokens < lines.check || !grown(agent.id, tokens, lines)) return
     const hard = tokens >= lines.hard
+    // [2026-11-10 local] A part that has had fewer than two real inputs (the handoff
+    // note does not count) is never moved on for size below the hard line.
+    if (!hard && realInputs(agent.session) < 2) return
     if (!hard && Date.now() < (noteFailures.get(agent.id)?.until ?? 0)) return
     checking.add(agent.id)
     try {
