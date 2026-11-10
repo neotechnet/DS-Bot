@@ -291,7 +291,9 @@ export function install(rt) {
 
   // Per Bot, the Bots and groups it waits for, and the Bots it does that work for. `for`
   // stays empty for work a Bot sent on its own, which it does for the user.
-  // local: waiting-live-only. A handed-on work counts only while the Bot it went to is
+  // local: waiting-live-only. A group wait and a subagent run have no Bot to test and
+  // always count; the wait mark, the status line and the give-up menu's waits all read
+  // this filter. A handed-on work counts only while the Bot it went to is
   // still on it: running a turn, holding an approval or a part switch, with a message
   // unread, or itself waiting on work it handed on. A work whose Bot answered some other
   // way and went idle stays open in the books, but no longer marks the asker waiting.
@@ -318,7 +320,7 @@ export function install(rt) {
     const pending = held(busyWith([...rt.live.keys()]))
     const onIt = onItTest()
     for (const { work, out } of pending) {
-      const live = out.filter(({ work: child }) => child.room !== undefined || onIt(child.to))
+      const live = out.filter(({ work: child }) => child.room !== undefined || child.to === undefined || onIt(child.to))
       if (live.length === 0) continue
       const entry = view[work.to] ??= { bots: [], rooms: [], for: [], waits: [] }
       for (const { id, work: child } of live) {
@@ -327,7 +329,7 @@ export function install(rt) {
       }
       add(entry.for, work.from)
     }
-    for (const work of sentOnOwn()) if (onIt(work.to)) add((view[work.from] ??= { bots: [], rooms: [], for: [], waits: [] }).bots, work.to)
+    for (const work of sentOnOwn()) if (onIt(work.to)) add((view[work.from] ??= { bots: [], rooms: [], for: [] }).bots, work.to)
     return view
   }
 
@@ -457,7 +459,7 @@ export function install(rt) {
     const onIt = onItTest()
     for (const { work, out } of held(busyWith(running))) {
       if (work.to !== botId) continue
-      const live = out.filter(({ work: child }) => child.room !== undefined || onIt(child.to))
+      const live = out.filter(({ work: child }) => child.room !== undefined || child.to === undefined || onIt(child.to))
       if (out.length > 0 && live.length === 0) continue
       const forName = nameOf(work.from) ? `, for ${nameOf(work.from)}` : ''
       const on = [...new Set(live.map(({ work: child }) => (child.room ? `group "${rt.roomOf(child.room)?.name ?? 'a group'}"` : child.name ?? nameOf(child.to) ?? 'a teammate')))]
