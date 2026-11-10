@@ -29,6 +29,9 @@ export function turnFailure(error) {
     message,
     ...(typeof error?.status === 'number' ? { status: error.status } : {}),
     ...(typeof error?.requestId === 'string' ? { requestId: error.requestId } : {}),
+    // Kept so a turn failure can name its own line in the diagnostics log. A provider
+    // error has no stack worth keeping, and AUTH already dropped its message.
+    ...(code !== 'AUTH' && typeof error?.stack === 'string' ? { stack: error.stack } : {}),
   }
 }
 
@@ -465,6 +468,19 @@ export function install(rt) {
     entry.info = info
     // The trigger's text without its header line, for the card gate (card-gate.js).
     entry.infoText = typeof text === 'string' ? text : undefined
+    // Where the job came from. A relay carries `origin` on its message source, so the
+    // operator's ask passes on hop by hop; the work it is for keeps it across a restart
+    // (handoffs.js), so a turn claimed for that work is the operator's too.
+    const askedFor = rt.workOf?.(info)
+    const operator = info?.origin === 'operator'
+      || (askedFor !== undefined && state.works?.[askedFor]?.origin === 'operator')
+      || (info?.work !== undefined && state.works?.[info.work]?.origin === 'operator')
+    if (operator && !rt.groupOwners.has(sessionId)) {
+      entry.origin = 'operator'
+      entry.originAt ??= Date.now()
+      if (typeof info.senderName === 'string') entry.originFrom = info.senderName
+      if (typeof text === 'string' && text.trim() !== '') entry.askText = text
+    }
     // A turn that was stopped for a part switch brings its joined requests along.
     if (Array.isArray(info.joined) && info.joined.length > 0) {
       entry.joined = info.joined.filter(item => item?.info !== undefined && item.info !== null)
@@ -530,7 +546,18 @@ export function install(rt) {
       const owner = rt.groupOwners.get(id)
       const botId = owner?.botId ?? rt.chatOwners.get(id)
       if (botId === undefined || (owner !== undefined && bots[botId] !== undefined)) continue
-      bots[botId] = { since: entry.since, ...doingOf(entry), ...(owner ? { roomId: owner.roomId } : {}) }
+      const forWork = rt.workOf?.(entry.info)
+      bots[botId] = {
+        since: entry.since,
+        ...doingOf(entry),
+        ...(owner ? { roomId: owner.roomId } : {}),
+        ...(forWork !== undefined ? { work: forWork } : {}),
+        ...(entry.origin === 'operator' ? {
+          origin: 'operator',
+          ...(entry.originFrom ? { originFrom: entry.originFrom } : {}),
+          ...(entry.askText ? { ask: entry.askText } : {}),
+        } : {}),
+      }
     }
     for (const [id] of subagentsByParent) {
       const sub = subagentDoingOf(id)
@@ -549,6 +576,20 @@ export function install(rt) {
       else bots[job.botId] ??= work
     }
     return bots
+  }
+
+  // The running turn a Bot is doing for the operator, when it has one: its own chat
+  // first, else a group Session it speaks in. delivery.js and handoffs.js read it, so a
+  // relay carries the origin on and the work a job waits for keeps it.
+  const operatorTurnOf = (botId) => {
+    if (botId === undefined) return undefined
+    const own = live.get(rt.chatOf(botId))
+    if (own?.turn !== undefined && own.origin === 'operator') return own
+    for (const [id, entry] of live) {
+      if (entry.turn === undefined || entry.origin !== 'operator') continue
+      if (rt.groupOwners.get(id)?.botId === botId) return entry
+    }
+    return undefined
   }
 
   // Per Session, when its running turn began.
@@ -611,6 +652,7 @@ export function install(rt) {
       code: failure.code,
       status: failure.status,
       requestId: failure.requestId,
+      stack: failure.stack,
       bot: rt.botOf(rt.selfOf(id))?.name ?? (rt.roomOf(id) ? undefined : 'unknown Bot'),
       where: placeOf(id),
       sessionId: id,
@@ -788,6 +830,12 @@ export function install(rt) {
           entry.toolCount = carry.toolCount ?? 0
           entry.opened = true
           entry.carried = true
+          // A steer cut carries the job's origin too: the fresh turn goes on with the
+          // same work, so it is the same Operator Task.
+          entry.origin = carry.origin
+          entry.originFrom = carry.originFrom
+          entry.askText = carry.askText
+          entry.originAt = carry.originAt
           if (carry.info !== undefined) claimTrigger(id, entry, carry.info)
           entry.joined = carry.joined
           // A request the carry displaced as this turn's trigger keeps its deferred
@@ -823,6 +871,17 @@ export function install(rt) {
         // Bot relay that lands inside it may claim: the first message of a turn
         // still claims it as today, a later one only joins it.
         const opened = entry.opened === true
+        // The operator's own line, or a task they scheduled, starts Operator work. A group
+        // post is queued as a room message and belongs to the group, so group work stays
+        // in Active Tasks. A message sent while the turn runs keeps the origin on the
+        // entry, so the wait until its own turn answers it still shows as the operator's.
+        if (!rt.groupOwners.has(id) && (source?.kind === 'user' || source?.kind === 'schedule')) {
+          entry.origin = 'operator'
+          entry.originAt ??= Date.now()
+          delete entry.originFrom
+          const asked = textOf(event.data.content)
+          if (asked.trim() !== '') entry.askText = asked
+        }
         if (entry.turn !== undefined && !bare(source)
           && (source?.kind === 'user' || source?.kind === REPLY_KIND || source?.kind === 'schedule' || source?.kind === SOURCE_KIND)) {
           entry.opened = true
@@ -963,6 +1022,13 @@ export function install(rt) {
         if (event.data?.target === 'next-step' && entry.turn !== undefined
           && (event.data.inserted ?? []).some(message => message?.source?.kind === 'user')) {
           entry.steeredAt = event.time ?? Date.now()
+          // The user's line steered the running turn: it is the operator's work, and no
+          // longer a manager's relay.
+          if (!rt.groupOwners.has(id)) {
+            entry.origin = 'operator'
+            entry.originAt ??= Date.now()
+            delete entry.originFrom
+          }
         }
         break
       case 'assistant/message': {
@@ -988,7 +1054,7 @@ export function install(rt) {
         const steerCut = cut !== undefined && event.data?.reason?.kind === 'aborted'
           && event.data.reason.reason?.kind === 'hook' && event.data.reason.reason.reason === STEER_CUT
         if (steerCut) {
-          entry.carry = { info: entry.info, joined: entry.joined ?? [], later: entry.later ?? [], texts: entry.texts.slice(0, cut.texts), shown: entry.shown, answers: entry.answers, toolCount: entry.toolCount ?? 0 }
+          entry.carry = { info: entry.info, joined: entry.joined ?? [], later: entry.later ?? [], texts: entry.texts.slice(0, cut.texts), shown: entry.shown, answers: entry.answers, toolCount: entry.toolCount ?? 0, origin: entry.origin, originFrom: entry.originFrom, askText: entry.askText, originAt: entry.originAt }
         }
         const info = entry.info
         const turn = entry.turn
@@ -1008,6 +1074,14 @@ export function install(rt) {
         const watched = entry.turn !== undefined
         entry.turn = undefined
         entry.info = undefined
+        // The turn's reply answers what it was doing, so an Operator Task ends here. A
+        // job that still waits on another Bot stays listed through its open work
+        // (handoffs.js), and an ask that is still queued marks the entry again when it
+        // arrives.
+        entry.origin = undefined
+        entry.originFrom = undefined
+        entry.askText = undefined
+        entry.originAt = undefined
         entry.texts = []
         entry.shown = 0
         entry.step = undefined
@@ -1261,5 +1335,5 @@ export function install(rt) {
     }, 'ds-bot: prompt rejection reasons')
   }
 
-  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, turnsView, steeredView, callDetail, doingOf, stopRoomTurn, stopChat, releaseBot, unblockBots, resumeBot, markSteerCut, hasSubagents, stopSubagents, adoptLiveWork })
+  Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, turnsView, steeredView, callDetail, doingOf, operatorTurnOf, stopRoomTurn, stopChat, releaseBot, unblockBots, resumeBot, markSteerCut, hasSubagents, stopSubagents, adoptLiveWork })
 }
