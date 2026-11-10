@@ -153,6 +153,10 @@ class ClaudeSession {
     // goes to a file and only its path is an argument.
     let systemFile
     if (system !== undefined) {
+      // Local patch 2026-11-09 (codebots): the DSH-built prompt names the
+      // DeepSeek model; on this route the model is Claude Code's.
+      const route = `running in the Claude Code program (model: ${model ?? 'CLI default'})`
+      system = system.replace(/powered by the \S+ model/g, route)
       try {
         systemFile = writeSystemFile(this.dshSessionId, system)
         args.push('--append-system-prompt-file', systemFile)
@@ -173,10 +177,20 @@ class ClaudeSession {
     // permission is refused outright. `stdio` sends it here as a
     // control_request, which becomes the Bot's approval card.
     args.push('--permission-prompt-tool', 'stdio')
+    // Local patch 2026-11-09 (codebots): coding bots run at high effort unless
+    // the engine sets its own, and load only the bot tools plus the
+    // work-history search, never the user's business MCP servers.
+    args.push('--effort', this.engine.engine.effort ?? 'high')
+    const mcpServers = {
+      'claude-memory-bridge': {
+        type: 'stdio',
+        command: 'C:\\Users\\SteveDempsey\\AppData\\Local\\Programs\\Python\\Python314\\python.exe',
+        args: ['C:\\Claude\\integrations\\Claude Memory Bridge\\server.py'],
+      },
+    }
+    if (mcp !== undefined) mcpServers.dsbot = { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } }
+    args.push('--strict-mcp-config', '--mcp-config', JSON.stringify({ mcpServers }))
     if (mcp !== undefined) {
-      args.push('--mcp-config', JSON.stringify({
-        mcpServers: { dsbot: { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } } },
-      }))
       // DS Bot's own team tools need no approval, as for a model-backed Bot:
       // toolsFor() already narrowed what this Bot may call.
       args.push('--allowedTools', 'mcp__dsbot')
