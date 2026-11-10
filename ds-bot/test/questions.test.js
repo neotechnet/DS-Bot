@@ -65,7 +65,7 @@ test('a card asked in a hidden Bot-to-Bot turn keeps its call id, and closing it
   const { emit, ask, questions, stop } = await start()
   t.after(stop)
   emit('writer', 'turn/start', { turn: 1 })
-  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name. CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
   await ask('writer', 'call-1')
   const asked = (await questions()).writer
   assert.equal(asked.question, 'Which name?')
@@ -89,4 +89,42 @@ test('a card asked in a visible turn stays at its call', async (t) => {
   emit('writer', 'user/message', { content: text('[Message from Chief · the user sees your reply here]\nIntroduce yourself'), source: { kind: 'bot', role: 'request', audience: 'user', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x2', hop: 0 } })
   await ask('writer', 'call-3')
   assert.equal((await questions()).writer.callId, 'call-3')
+})
+
+// local: question-lifecycle. A card closes once the Bot finishes a later turn the user
+// could see that asked nothing; a hidden Bot-to-Bot turn in between leaves it open.
+test('a later visible turn that asks nothing closes the card; a hidden one leaves it', async (t) => {
+  const { emit, ask, questions, stop } = await start()
+  t.after(stop)
+  emit('writer', 'turn/start', { turn: 1 })
+  emit('writer', 'user/message', { content: text('Help me name a Bot'), source: { kind: 'user' } })
+  await ask('writer', 'call-1')
+  emit('writer', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  assert.equal((await questions()).writer.question, 'Which name?')
+
+  emit('writer', 'turn/start', { turn: 2 })
+  emit('writer', 'user/message', { content: text('[Message from Chief]\nstatus? CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x9', hop: 0 } })
+  emit('writer', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
+  assert.equal((await questions()).writer?.question, 'Which name?')
+
+  emit('writer', 'turn/start', { turn: 3 })
+  emit('writer', 'user/message', { content: text('never mind, call it Scout'), source: { kind: 'user' } })
+  emit('writer', 'turn/end', { turn: 3, reason: { kind: 'completed' } })
+  for (let count = 0; count < 50 && (await questions()).writer !== undefined; count += 1) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal((await questions()).writer, undefined)
+})
+
+test('only a Main Bot voids another Bot\'s open question, and the card leaves', async (t) => {
+  const { emit, ask, questions, stop } = await start()
+  t.after(stop)
+  const voidQuestion = (args, sessionId) => rt.teamTools.find(d => d.name === 'void_question').execute(args, { agent: { id: sessionId } })
+  await assert.rejects(voidQuestion({ bot: 'Writer' }, 'chief'), /Writer has no open question/)
+  emit('writer', 'turn/start', { turn: 1 })
+  emit('writer', 'user/message', { content: text('Help me name a Bot'), source: { kind: 'user' } })
+  await ask('writer', 'call-1')
+  await assert.rejects(voidQuestion({ bot: 'Chief' }, 'writer'), /Only a Main Bot can void a question/)
+  assert.equal((await questions()).writer.question, 'Which name?')
+  const out = await voidQuestion({ bot: 'Writer', reason: 'the job moved' }, 'chief')
+  assert.match(out, /^The question of Writer is voided/)
+  assert.equal((await questions()).writer, undefined)
 })

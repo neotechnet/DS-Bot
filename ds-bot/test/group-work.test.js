@@ -357,7 +357,10 @@ test('replies a post waits for are work handed on: the answer to the Bot that as
   host.finish('a', '已经让 Writer 去看了。')
   const waiting = (await host.call('state', {})).value
   assert.equal(waiting.activity.a, 'waiting')
+  // local: waiting-live-only. Tester sent Chief the request from its own chat, so Tester
+  // waits on Chief while Chief waits on the group.
   assert.deepEqual([waiting.work.waiting.a.bots, waiting.work.waiting.a.rooms, waiting.work.waiting.a.for], [[], ['r1'], ['c']])
+  assert.deepEqual([waiting.work.waiting.c.bots, waiting.work.waiting.c.rooms, waiting.work.waiting.c.for], [['a'], [], []])
   // The menu gives up the wait by its group's name.
   assert.deepEqual(waiting.work.waiting.a.waits.map(item => [item.room, item.name, typeof item.id]), [['r1', 'Ops', 'string']])
   const done = host.round('c1', host.takePost())
@@ -469,7 +472,10 @@ test('a steered group call keeps the later caller when the earlier work ends', a
   assert.equal(deferred.source.role, 'room')
   assert.equal(deferred.source.askedBy, 'a')
   assert.equal(deferred.source.roomId, 'r1')
-  assert.match(text(deferred), /改用新模板/)
+  // The later call is the one handed back, and it points at what the member already read.
+  assert.equal(deferred.source.exchangeId, correction.source.exchangeId)
+  assert.match(text(deferred), /you read this call during your last task; answer it now/)
+  assert.doesNotMatch(text(deferred), /改用新模板/)
   host.finish('gb', '已换成新模板。')
   await settle(() => host.agentOf('r1').calls.some(message => message.source.askedBy === 'a'))
   const report = host.agentOf('r1').calls.find(message => message.source.askedBy === 'a')

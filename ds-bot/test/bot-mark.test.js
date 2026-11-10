@@ -39,9 +39,14 @@ test('a Bot that waits for work it handed on has a mark of its own, behind a run
 })
 
 test('a waiting Bot does not wear the working badge, since no turn of it runs', () => {
-  const badges = state => BotAvatar({ bot: { id: 'b', name: 'Writer' }, size: 36, state }).children.slice(1).filter(Boolean).map(child => child.props.className)
-  assert.deepEqual(badges('waiting'), [])
+  const badges = (state, extra = {}) => BotAvatar({ bot: { id: 'b', name: 'Writer' }, size: 36, state, ...extra }).children.slice(1).filter(Boolean).map(child => child.props.className)
+  // local: waiting-mark. It wears a clock of its own instead.
+  assert.deepEqual(badges('waiting'), ['bt-badge bt-badge-waiting'])
   assert.deepEqual(badges('working'), ['bt-badge bt-badge-working'])
+  // A Main Bot keeps its star and shows the wait opposite it.
+  assert.deepEqual(badges('waiting', { main: true }), ['bt-badge bt-badge-main', 'bt-badge bt-badge-waiting'])
+  assert.deepEqual(badges('waiting', { badge: false }), [])
+  assert.match(SHELL_CSS, /\.bt-badge-waiting\{right:auto;left:0;/)
 })
 
 test('a photo that does not load shows the Bot\'s character instead', () => {
