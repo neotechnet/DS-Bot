@@ -65,6 +65,9 @@ export const shellTokens = ({ light, dark }) => ({
   '--dsw-alias-label-primary': { light: light.text, dark: dark.text },
   '--dsw-alias-label-secondary': { light: rgba(light.text, 0.74), dark: rgba(dark.text, 0.74) },
   '--dsw-alias-label-tertiary': { light: rgba(light.text, 0.6), dark: rgba(dark.text, 0.6) },
+  // The shell's idle dot (pending to-dos, idle sessions) is neutral-300, 1.4:1 on the
+  // light page; graphics need 3:1. Same step as label-tertiary keeps it in each theme.
+  '--dsw-alias-state-idle-primary': { light: rgba(light.text, 0.6), dark: rgba(dark.text, 0.6) },
 })
 
 // Other plugins add character shapes and themes through `window.dshBot`, or queue

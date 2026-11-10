@@ -81,6 +81,9 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on agent/created',
     'effect ds-bot: wake parts that wait for their run mode',
     'on agent/pre-step (prepend)',
+    // local: the step-failure recorder (parts.js, 2026-11-05) wraps the chain, so
+    // it registers after the parts listener and prepends ahead of it.
+    'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
     'on agent/request-error (prepend)',

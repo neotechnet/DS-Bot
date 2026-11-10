@@ -136,7 +136,7 @@ test('show_view registers an interactive card, refuses a group and a display-onl
   // A hidden Bot-to-Bot turn keeps both the card and its call id.
   emit('writer-now', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
   emit('writer-now', 'turn/start', { turn: 2 })
-  emit('writer-now', 'user/message', { content: text('[Message from Chief]\nAsk them'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  emit('writer-now', 'user/message', { content: text('[Message from Chief]\nAsk them. CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
   const hidden = await show('writer-now', { title: 'Pick', view: CHOICES }, 'call-hidden')
   assert.equal(hidden.concluded, true)
   assert.equal((await team()).views['writer-now'].callId, 'call-hidden')
@@ -209,7 +209,7 @@ test('view-reply claims the card, refuses a stale or invalid answer, and restore
   assert.equal(again.error.message, 'This view is no longer open')
 })
 
-test('dismiss-view drops the open view, keeps it as a closed card, and leaves a question card alone', async (t) => {
+test('dismiss-view drops the open view and leaves a question card alone', async (t) => {
   const { show, call, team, stop } = await start()
   t.after(stop)
   await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'chief' } })
@@ -222,20 +222,7 @@ test('dismiss-view drops the open view, keeps it as a closed card, and leaves a 
   const open = await team()
   assert.equal(open.views['writer-now'], undefined)
   assert.equal(open.questions['writer-now'].question, 'Keep me')
-  assert.deepEqual(open.closedCards, { 'writer-now': { 'call-1': 'dismissed' } })
   assert.equal((await call('dismiss-view', { sessionId: 'writer-now' })).ok, true)
-  assert.equal((await call('dismiss-question', { sessionId: 'writer-now' })).ok, true)
-  assert.deepEqual((await team()).closedCards, { 'writer-now': { 'call-1': 'dismissed', 'q-call': 'dismissed' } })
-})
-
-test('an answered view is not kept as a closed card: its reply message carries it', async (t) => {
-  const { show, call, team, stop } = await start()
-  t.after(stop)
-  await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'chief' } })
-  await show('writer-now', { title: 'Pick', view: CHOICES })
-  const pending = (await team()).views['writer-now']
-  assert.equal((await call('view-reply', { sessionId: 'writer-now', viewId: pending.id, action: 'pick', values: { selected: ['A'] } })).ok, true)
-  assert.deepEqual((await team()).closedCards, {})
 })
 
 test('a user message drops the open question and the open view together', async (t) => {

@@ -94,6 +94,12 @@ export function install(rt) {
     const fromName = senderName ?? from?.name ?? 'You'
     const room = rt.roomOf(roomId)
     const asker = work === undefined ? undefined : rt.botOf(state.works?.[work]?.from)?.name
+    // A message sent while its sender works for the operator is the operator's ask, and
+    // says so on its source: each relay hop passes it on, so a job keeps its origin all
+    // the way down the team. After a restart the work it is for remembers (handoffs.js).
+    const origin = rt.operatorTurnOf?.(fromId) !== undefined
+      ? 'operator'
+      : (work === undefined ? undefined : state.works?.[work]?.origin)
     // Session events reject `undefined` members, so optional fields are omitted instead.
     const source = {
       kind: SOURCE_KIND,
@@ -101,6 +107,7 @@ export function install(rt) {
       role,
       exchangeId,
       senderName: fromName,
+      ...(origin === 'operator' ? { origin } : {}),
       ...(work ? { work } : {}),
       ...(fromId ? { senderSessionId: fromId } : {}),
       ...(replyTo ? { replyTo } : {}),
