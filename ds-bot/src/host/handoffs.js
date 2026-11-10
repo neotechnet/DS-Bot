@@ -284,10 +284,12 @@ export function install(rt) {
 
   // A work stops waiting when its reply has arrived, or when it has sat past the
   // ceiling with no result at all. An open id left behind by a reply that came back
-  // another way must not make its Bot look loaded for days.
+  // another way must not make its Bot look loaded for days. A subagent run has no Bot
+  // to hand back, so neither rule applies to it.
   const arrived = (work, childId) => (work.results ?? []).some(result => result.id === childId)
   const pastCeiling = work => Date.now() - (work.at ?? 0) > WAIT_CEILING_MS
   const forgotten = work => (work.results ?? []).length === 0 && pastCeiling(work)
+  const stillOwed = (work, childId, child) => child.to === undefined || (!arrived(work, childId) && !forgotten(work))
 
   // The works their Bots wait on, outside a turn that does them (`busy`): each with what
   // it handed on that has not come back yet. One that came back waits only to be read.
@@ -296,9 +298,10 @@ export function install(rt) {
     .map(([id, work]) => ({
       id,
       work,
-      out: (forgotten(work) ? [] : work.open.filter(childId => !arrived(work, childId)))
+      out: work.open
         .map(childId => ({ id: childId, work: works()[childId] }))
-        .filter(child => child.work !== undefined),
+        .filter(child => child.work !== undefined)
+        .filter(child => stillOwed(work, child.id, child.work)),
     }))
   const busyWith = sessionIds => new Set(sessionIds.map(sessionId => rt.live.get(sessionId)).filter(entry => entry?.turn !== undefined).map(entry => workOf(entry.info)).filter(Boolean))
   // What a Bot sent from outside any work, such as its chat with the user: nothing above
