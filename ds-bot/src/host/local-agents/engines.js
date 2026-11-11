@@ -15,7 +15,10 @@ export const ROUTE_PREFIX = 'local-'
 
 const CLIS = {
   'devin-cli': { name: 'Devin CLI', kind: 'acp', command: 'devin', args: ['acp'], version: ['--version'], signedIn: { args: ['auth', 'status'] } },
-  'claude-code': { name: 'Claude Code', kind: 'claude', command: 'claude', args: [], version: ['--version'], signedIn: { file: ['.claude', '.credentials.json'] } },
+  // [2026-11-09 local] 'claude-code' entry removed (Steve): the Claude Code
+  // OAuth session is expired, so the four models it published (default, opus,
+  // sonnet, haiku) only cluttered the model picker, and ds-bot auto-detects the
+  // `claude` CLI with no setting to switch it off. Carried onto 0.3.5 on 2026-11-11.
   'codex-cli': { name: 'Codex CLI', kind: 'codex', command: 'codex', args: ['app-server', '--listen', 'stdio://'], version: ['--version'], signedIn: { args: ['login', 'status'] } },
   'opencode': { name: 'OpenCode', kind: 'acp', command: 'opencode', args: ['acp'], version: ['--version'] },
   'cursor-cli': { name: 'Cursor CLI', kind: 'acp', command: 'cursor-agent', args: ['acp'], version: ['--version'], signedIn: { args: ['status'] } },
