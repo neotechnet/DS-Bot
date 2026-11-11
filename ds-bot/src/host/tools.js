@@ -993,6 +993,15 @@ Reason: ${why}` : ''}`
     for (const lift of held.connectorLifts ?? []) { try { lift() } catch { /* already lifted */ } }
     held.connectorLifts = []
     held.connectorDenied = new Set(deny)
+    if (deny.length === 0) return
+    // [2026-11-10 local, carried 2026-11-11] One restrict() for the whole list: each call rebuilds the tool view, so a call
+    // per name over hundreds of connector tools held the host at start. A name the
+    // Agent's own scope serves fails the whole list, and only then goes per name.
+    try {
+      const lift = agent.ctx.tools.restrict({ deny })
+      if (typeof lift === 'function') held.connectorLifts.push(lift)
+      return
+    } catch { /* fall through to one name at a time */ }
     for (const name of deny) {
       try {
         const lift = agent.ctx.tools.restrict({ deny: [name] })
