@@ -487,6 +487,91 @@ test('a pending secret request sends text without buttons', async (t) => {
   assert.equal(card.buttons, undefined)
 })
 
+const PICK_VIEW = { id: 'v1', title: 'Ship it?', view: { type: 'stack', children: [{ type: 'text', text: 'The build is green.' }, { type: 'options', id: 'pick', options: [{ label: 'Ship' }, { label: 'Hold', description: 'wait a day' }] }] } }
+const pairedChat = async (s) => {
+  const conn = await add(s)
+  s.rt.state.im.connections[conn.id].paired.push({ id: 'u1', name: 'U1', at: 1 })
+  await s.rt.save()
+  await dm(s, 'u1', 'hi')
+  s.fake.sent.length = 0
+  return conn
+}
+const showView = async (s, view = PICK_VIEW) => {
+  s.rt.state.views = { a: structuredClone(view) }
+  await s.rt.save()
+  await s.flush()
+}
+
+test('a single-choice view card gets buttons, and a press answers the view', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s)
+  const card = s.fake.sent.find(entry => entry.buttons !== undefined)
+  assert.ok(card, 'the view card has buttons')
+  assert.deepEqual(card.buttons, [{ data: 'v:v1:0', label: 'Ship' }, { data: 'v:v1:1', label: 'Hold' }])
+  assert.match(card.text, /Chief asks: Ship it\?\nThe build is green\.\n1\. Ship\n2\. Hold - wait a day\n\(reply with the number\)/)
+  await s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data: 'v:v1:1', messageId: 1 })
+  assert.equal(s.rt.state.views.a, undefined, 'the press answers the view')
+  assert.equal(s.agents.get('a')?.followed, 1)
+  await s.flush()
+  assert.equal(s.fake.edited.length, 1, 'the answered card is edited shut')
+})
+
+test('a bare number answers the newest open view card', async (t) => {
+  const s = await start({ platform: 'dingtalk', adapter: fakeAdapter({ buttons: false }) })
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s)
+  assert.equal(s.fake.sent.at(-1).buttons, undefined)
+  s.prompts.length = 0
+  await dm(s, 'u1', '1')
+  assert.equal(s.rt.state.views.a, undefined, 'the number answers the view')
+  assert.equal(s.agents.get('a')?.followed, 1)
+  assert.equal(s.prompts.length, 0, 'the number is not also sent as a message')
+})
+
+test('a press on a view that was already answered gets the stale text', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s)
+  const press = () => s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data: 'v:v1:0', messageId: 1 })
+  await press()
+  assert.equal(s.agents.get('a')?.followed, 1)
+  await press()
+  assert.equal(s.agents.get('a')?.followed, 1, 'a second press answers nothing')
+  await s.flush()
+  assert.ok(s.fake.sent.some(entry => /already answered/.test(entry.text ?? '')), 'the late press gets the stale text')
+})
+
+test('a form view stays a text card and a number goes to the Bot', async (t) => {
+  const s = await start({ platform: 'dingtalk', adapter: fakeAdapter({ buttons: false }) })
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s, { id: 'v2', title: 'Details', view: { type: 'form', id: 'f', fields: [{ id: 'name', label: 'Name' }] } })
+  const card = s.fake.sent.at(-1)
+  assert.match(card.text, /shared a card/)
+  assert.equal(card.buttons, undefined)
+  s.prompts.length = 0
+  await dm(s, 'u1', '1')
+  assert.ok(s.rt.state.views.a !== undefined, 'the form view stays open')
+  assert.equal(s.prompts.length, 1, 'the number reaches the Bot as a message')
+})
+
+test('a view answered on the computer settles its IM card', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s)
+  assert.ok(s.fake.sent.some(entry => entry.buttons !== undefined))
+  await s.rt.answerView('a', 'v1', 'pick', { selected: ['Ship'] })
+  await s.rt.save()
+  await s.flush()
+  assert.equal(s.fake.edited.length, 1, 'the IM copy is edited shut')
+  assert.match(s.fake.edited[0].text, /answered/)
+})
+
 test('a read-only host runs no adapter; becoming writable starts it', async (t) => {
   const s = await start()
   t.after(s.stop)

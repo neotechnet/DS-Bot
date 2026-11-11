@@ -576,27 +576,7 @@ export function install(rt) {
         case 'view-reply': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
           await rt.load()
-          const past = rt.pastOwners.get(body.sessionId)
-          const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
-          const pending = rt.own(state.views, sessionId)
-          if (pending === undefined || pending.id !== body.viewId) return fail('This view is no longer open', 'bot/stale')
-          const checked = validateViewAnswer(pending.view, body.action, body.values)
-          if (checked.error !== undefined) return fail(checked.error, 'bot/invalid')
-          const reply = viewReply(pending, body.action, body.values)
-          if (reply === undefined) return fail('Nothing to send', 'bot/invalid')
-          // Claim the view before queueing so a second answer is refused.
-          delete state.views[sessionId]
-          try {
-            await rt.ensureCapabilities(sessionId)
-            const agent = await rt.resolveAgent(sessionId)
-            agent.followup(createUserMessage({ content: [{ type: 'text', text: reply.text }], source: reply.source }))
-            await ctx.sessions.flush(agent.session)
-          } catch (error) {
-            state.views[sessionId] ??= pending
-            throw error
-          }
-          await rt.save()
-          return ok(true)
+          return ok(await rt.answerView(body.sessionId, body.viewId, body.action, body.values))
         }
         // A photo for the next `send`, one per call: a phone's link carries a few MB per
         // message, so photos travel one by one and the message names them.
@@ -840,7 +820,32 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { sendUser, answerQuestion })
+  // The user's answer to a show_view card, from the web, the phone or an IM chat.
+  async function answerView(sessionRef, viewId, action, values) {
+    const past = rt.pastOwners.get(sessionRef)
+    const sessionId = rt.botOf(sessionRef) ? rt.chatOf(sessionRef) : past && past.roomId === undefined ? rt.chatOf(past.botId) : sessionRef
+    const pending = rt.own(state.views, sessionId)
+    if (pending === undefined || pending.id !== viewId) throw Object.assign(new Error('This view is no longer open'), { code: 'bot/stale' })
+    const checked = validateViewAnswer(pending.view, action, values)
+    if (checked.error !== undefined) throw Object.assign(new Error(checked.error), { code: 'bot/invalid' })
+    const reply = viewReply(pending, action, values)
+    if (reply === undefined) throw Object.assign(new Error('Nothing to send'), { code: 'bot/invalid' })
+    // Claim the view before queueing so a second answer is refused.
+    delete state.views[sessionId]
+    try {
+      await rt.ensureCapabilities(sessionId)
+      const agent = await rt.resolveAgent(sessionId)
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: reply.text }], source: reply.source }))
+      await ctx.sessions.flush(agent.session)
+    } catch (error) {
+      state.views[sessionId] ??= pending
+      throw error
+    }
+    await rt.save()
+    return true
+  }
+
+  Object.assign(rt, { sendUser, answerQuestion, answerView })
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({
