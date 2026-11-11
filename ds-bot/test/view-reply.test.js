@@ -245,7 +245,11 @@ test('a user message drops the open question and the open view together', async 
   assert.equal(open.closedViews, undefined)
 })
 
-test('a hidden-turn card closes into closedCards at its call, never into a dock record', async (t) => {
+// [2026-11-11 local] Skipped: the local card gate (card-gate.js) refuses a card a Bot
+// asks inside a job another Bot sent it, so this upstream scenario (Chief asks
+// writer-now, writer-now cards the user) never opens a card. card-gate.test.js covers
+// the refusal.
+test.skip('a hidden-turn card closes into closedCards at its call, never into a dock record', async (t) => {
   const { emit, show, call, team, stop } = await start()
   t.after(stop)
   await rt.teamTools.find(d => d.name === 'list_bots').execute({}, { agent: { id: 'chief' } })

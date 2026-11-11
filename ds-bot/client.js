@@ -11612,6 +11612,46 @@ var DSH_DE = {
 };
 
 // src/client/i18n.js
+var LOCAL_ENGLISH_ONLY = [
+  "Brainstorm",
+  "Waiting for a teammate",
+  "{count} tasks from you",
+  "{count} tasks wait on you",
+  "{title} · {count}",
+  "{yours} from you, {waiting} waiting on you",
+  "1 task from you",
+  "1 task waits on you",
+  "A card waiting for your answer",
+  "a group",
+  "a teammate",
+  "Active Tasks",
+  "Answer card",
+  "Decision {id}",
+  "due {date}",
+  "From {name}",
+  'in group "{name}"',
+  "Key request",
+  "Moving on to a fresh part",
+  "not shown on a card yet",
+  "Nothing of yours in hand.",
+  "Nothing running right now.",
+  "Nothing waiting on you.",
+  "Operator Tasks",
+  "Order",
+  "Question card",
+  "Relayed by {name}",
+  "Running {tool}",
+  "Running {tool} on {target}",
+  "The ask is not recorded",
+  "Tool approval",
+  "Unresolved Tasks",
+  "Waiting on",
+  "Working now",
+  "Your ask"
+];
+for (const dict of [JA, KO, ES, FR, DE]) {
+  for (const key of LOCAL_ENGLISH_ONLY) if (!Object.hasOwn(dict, key)) dict[key] = key;
+}
 var NAMESPACE = "ds-bot";
 var ZH = {
   // Shared
