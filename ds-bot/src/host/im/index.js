@@ -423,6 +423,54 @@ export function install(rt) {
     }
     return true
   }
+  const viewById = (id) => {
+    for (const [sessionId, view] of Object.entries(state.views ?? {})) {
+      if (view.id === id) return { sessionId, view }
+    }
+    return undefined
+  }
+  // A view a chat can answer with a button or a number: one single-choice
+  // options component and no inputs. Any other view stays text only.
+  const choiceOf = (view) => {
+    const answers = []
+    const texts = []
+    const walk = (node) => {
+      if (node === null || typeof node !== 'object') return
+      if (['options', 'confirm', 'form', 'submit', 'slider', 'choice', 'toggle', 'number'].includes(node.type)) answers.push(node)
+      if (node.type === 'text' && typeof node.text === 'string' && node.text.trim() !== '') texts.push(node.text.trim())
+      for (const child of Array.isArray(node.children) ? node.children : []) walk(child)
+    }
+    walk(view)
+    const node = answers[0]
+    if (answers.length !== 1 || node.type !== 'options' || node.multi === true || typeof node.id !== 'string') return undefined
+    const options = (Array.isArray(node.options) ? node.options : []).filter(option => typeof option?.label === 'string')
+    return options.length === 0 ? undefined : { action: node.id, options, texts }
+  }
+  const answerViewCard = async (conn, chat, cardKey, label) => {
+    const held = openCard(conn, chat.key, cardKey)
+    if (held === undefined) return false
+    const found = viewById(held.cardKey.slice(2))
+    const choice = found === undefined ? undefined : choiceOf(found.view.view)
+    if (found === undefined || choice === undefined) {
+      await sendCardReply(conn, chat, text('stale'))
+      return true
+    }
+    if (!choice.options.some(option => option.label === label)) return false
+    try {
+      await rt.answerView(found.sessionId, found.view.id, choice.action, { selected: [label] })
+      await settleCard(conn.id, held.cardKey, label)
+      await settledEdits(conn)
+    } catch (error) {
+      if (error?.code === 'bot/stale') {
+        await settleCard(conn.id, held.cardKey, text('answered'))
+        await sendCardReply(conn, chat, text('stale'))
+        await settledEdits(conn)
+        return true
+      }
+      throw error
+    }
+    return true
+  }
   const answerApprovalCard = async (conn, chat, cardKey, choice) => {
     const held = openCard(conn, chat.key, cardKey)
     if (held === undefined) return false
@@ -447,7 +495,8 @@ export function install(rt) {
     const data = runtimes.get(conn.id)?.data
     if (data === undefined) return undefined
     for (const [cardKey, entries] of Object.entries(data.cards).reverse()) {
-      if (!cardKey.startsWith('q:') && !cardKey.startsWith('a:')) continue
+      const choiceView = cardKey.startsWith('v:') && choiceOf(viewById(cardKey.slice(2))?.view.view) !== undefined
+      if (!cardKey.startsWith('q:') && !cardKey.startsWith('a:') && !choiceView) continue
       const entry = entries.find(item => item.chatKey === chatKey && item.answer === undefined)
       if (entry !== undefined) return { cardKey, entry }
     }
@@ -503,6 +552,9 @@ export function install(rt) {
         && picked.length === 1 && (picked[0] === 1 || picked[0] === 2)
         && rt.approvalsView().some(entry => `a:${entry.id}` === held.cardKey)) {
         if (await answerApprovalCard(conn, msg.chat, held.cardKey, picked[0] === 1 ? 'allow' : 'reject')) return
+      } else if (held !== undefined && held.cardKey.startsWith('v:') && picked.length === 1) {
+        const label = choiceOf(viewById(held.cardKey.slice(2))?.view.view)?.options[picked[0] - 1]?.label
+        if (label !== undefined && await answerViewCard(conn, msg.chat, held.cardKey, label)) return
       }
     }
     if (target === undefined) {
@@ -550,6 +602,14 @@ export function install(rt) {
         if (!(await answerApprovalCard(conn, chat, cardKey, choice))) await sendCardReply(conn, chat, text('stale'))
       }
     }
+    if (data.startsWith('v:') && cut > 2) {
+      const label = choiceOf(viewById(cardKey.slice(2))?.view.view)?.options[Number(choice)]?.label
+      if (label === undefined) {
+        await sendCardReply(conn, chat, text('stale'))
+        return
+      }
+      if (!(await answerViewCard(conn, chat, cardKey, label))) await sendCardReply(conn, chat, text('stale'))
+    }
   }
 
   // ------------------------------------------------------------------ cards
@@ -559,10 +619,16 @@ export function install(rt) {
       const hint = question.multiSelect === true ? text('numbersMulti') : text('numbers')
       return `${text('question', { bot })}${question.question}${question.detail ? `\n${question.detail}` : ''}\n${options}\n(${hint})`
     },
+    view: (bot, title, choice) => {
+      const options = choice.options.map((option, index) => `${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ''}`).join('\n')
+      const detail = choice.texts.join('\n')
+      return `${text('question', { bot })}${title ?? ''}${detail !== '' ? `\n${detail}` : ''}\n${options}\n(${text('numbers')})`
+    },
     approval: (bot, entry) => `${text('approval', { bot })}${entry.tool}${entry.reason ? ` — ${entry.reason}` : ''}${entry.detail?.text ? `\n${entry.detail.text}` : ''}${entry.detail?.code ? `\n${entry.detail.code}` : ''}`,
   }
   const cardButtons = {
     question: (question) => (question.multiSelect === true ? undefined : (question.options ?? []).map((option, index) => ({ data: `q:${question.id}:${index}`, label: option.label }))),
+    view: (id, choice) => choice.options.map((option, index) => ({ data: `v:${id}:${index}`, label: option.label })),
     approval: (id) => [{ data: `a:${id}:allow`, label: text('allow') }, { data: `a:${id}:reject`, label: text('reject') }],
   }
 
@@ -602,13 +668,19 @@ export function install(rt) {
           await sendCard(conn, cardKey, listeners(conn, { botId }), text('secretAsk', { bot: bot.name, name: request.name }))
         }
       }
-      // Views awaiting a reply: text form only.
+      // Views awaiting a reply: a single choice is a question card, any other view text only.
       for (const [sessionId, view] of Object.entries(state.views ?? {})) {
         const cardKey = `v:${view.id}`
         if (data.cards[cardKey] !== undefined) continue
         const botId = rt.chatOwners.get(sessionId)
         const bot = rt.botOf(botId)
         if (bot === undefined) continue
+        const choice = choiceOf(view.view)
+        if (choice !== undefined) {
+          const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.view(view.id, choice) : undefined
+          await sendCard(conn, cardKey, listeners(conn, { botId }), cardText.view(bot.name, view.title, choice), buttons)
+          continue
+        }
         const form = viewCardText({ title: view.title, view: view.view })
         await sendCard(conn, cardKey, listeners(conn, { botId }), `${text('viewShow', { bot: bot.name })}${form !== '' ? `\n${form}` : view.title ? `\n${view.title}` : ''}`)
       }
