@@ -91,9 +91,9 @@ test('a card asked in a visible turn stays at its call', async (t) => {
   assert.equal((await questions()).writer.callId, 'call-3')
 })
 
-// local: question-lifecycle. A card closes once the Bot finishes a later turn the user
-// could see that asked nothing; a hidden Bot-to-Bot turn in between leaves it open.
-test('a later visible turn that asks nothing closes the card; a hidden one leaves it', async (t) => {
+// local: question-lifecycle. A card waits for the user: later turns of the Bot, hidden
+// Bot-to-Bot ones and ones the user can see, leave it open; the user's own message closes it.
+test('a card survives later Bot turns, hidden or visible, until the user writes', async (t) => {
   const { emit, ask, questions, stop } = await start()
   t.after(stop)
   emit('writer', 'turn/start', { turn: 1 })
@@ -105,11 +105,19 @@ test('a later visible turn that asks nothing closes the card; a hidden one leave
   emit('writer', 'turn/start', { turn: 2 })
   emit('writer', 'user/message', { content: text('[Message from Chief]\nstatus? CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x9', hop: 0 } })
   emit('writer', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  assert.equal((await questions()).writer?.question, 'Which name?')
+  assert.equal((await questions()).writer?.question, 'Which name?', 'a hidden Bot-to-Bot turn leaves it open')
 
   emit('writer', 'turn/start', { turn: 3 })
-  emit('writer', 'user/message', { content: text('never mind, call it Scout'), source: { kind: 'user' } })
+  emit('writer', 'user/message', { content: text('[Message from Chief · the user sees your reply here]\nReport in'), source: { kind: 'bot', role: 'request', audience: 'user', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x10', hop: 0 } })
   emit('writer', 'turn/end', { turn: 3, reason: { kind: 'completed' } })
+  emit('writer', 'turn/start', { turn: 4 })
+  emit('writer', 'turn/end', { turn: 4, reason: { kind: 'completed' } })
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal((await questions()).writer?.question, 'Which name?', 'turns the user can see that ask nothing leave it open')
+
+  emit('writer', 'turn/start', { turn: 5 })
+  emit('writer', 'user/message', { content: text('never mind, call it Scout'), source: { kind: 'user' } })
+  emit('writer', 'turn/end', { turn: 5, reason: { kind: 'completed' } })
   for (let count = 0; count < 50 && (await questions()).writer !== undefined; count += 1) await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal((await questions()).writer, undefined)
 })

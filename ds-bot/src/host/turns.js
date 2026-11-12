@@ -811,7 +811,6 @@ export function install(rt) {
         entry.carried = false
         let claimedPending
         let claimedPendingText
-        entry.card = state.questions[id]?.id
         if (entry.pending !== undefined) {
           claimedPending = entry.pending
           claimedPendingText = entry.pendingText
@@ -1059,7 +1058,6 @@ export function install(rt) {
           entry.carry = { info: entry.info, joined: entry.joined ?? [], later: entry.later ?? [], texts: entry.texts.slice(0, cut.texts), shown: entry.shown, answers: entry.answers, toolCount: entry.toolCount ?? 0, origin: entry.origin, originFrom: entry.originFrom, askText: entry.askText, originAt: entry.originAt }
         }
         const info = entry.info
-        const turn = entry.turn
         const joined = entry.joined ?? []
         // What the group already saw of the turn is not posted again.
         const texts = entry.texts.slice(entry.shown)
@@ -1100,8 +1098,6 @@ export function install(rt) {
         const later = entry.later ?? []
         entry.later = []
         if (steerCut || suppressedSubagent) break
-        const card = entry.card
-        entry.card = undefined
         for (const result of later) {
           void rt.deliver({
             fromId: result.info.senderSessionId,
@@ -1165,16 +1161,6 @@ export function install(rt) {
           } else {
             void retryWrittenCall(id, info).catch(error => rt.warn('ds-bot: asking %s to run its written tool call failed: %s', id, error))
           }
-        }
-        // A finished turn the user could see that asked nothing has moved on, so the card
-        // it left standing is stale. `card` is the card this turn opened on: a turn that
-        // asked has another id, or none here at all. A hidden Bot-to-Bot turn shows the user
-        // nothing, so its card still waits for them. A fresh part's handoff turn carries its
-        // card over; a failed or stopped turn said nothing about it.
-        const hidden = (state.exchangeTurns[id] ?? []).includes(turn)
-        if (card !== undefined && state.questions[id]?.id === card && reason?.kind === 'completed' && !retry && !hidden && info?.handoff !== true) {
-          delete state.questions[id]
-          void rt.save().catch(() => {})
         }
         const replyText = () => {
           const reply = (wroteCall ? texts.map(stripWrittenCalls) : texts).join('\n\n').trim()
