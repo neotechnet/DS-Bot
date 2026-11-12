@@ -1,5 +1,5 @@
 // WeCom intelligent robot: one long-lived WebSocket, a { cmd, headers: {
-// req_id }, body } protocol — aibot_subscribe authenticates, ping heartbeats,
+// req_id }, body } protocol: aibot_subscribe authenticates, ping heartbeats,
 // aibot_msg_callback carries inbound messages answered through
 // aibot_respond_msg with the callback's req_id, later messages use
 // aibot_send_msg. Template-card buttons come back as aibot_event_callback.

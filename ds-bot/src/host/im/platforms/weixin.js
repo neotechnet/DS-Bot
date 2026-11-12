@@ -1,4 +1,4 @@
-// WeChat iLink: a QR login creates the connection — get_bot_qrcode, then a
+// WeChat iLink: a QR login creates the connection: get_bot_qrcode, then a
 // get_qrcode_status long poll until the owner confirms on their phone; the
 // reply carries bot_token, ilink_bot_id, ilink_user_id and the base URL.
 // From then a getupdates long poll delivers messages (the get_updates_buf

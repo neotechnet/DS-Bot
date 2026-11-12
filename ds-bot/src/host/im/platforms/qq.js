@@ -2,7 +2,7 @@
 // gateway (hello, heartbeat, identify, resume, reconnect, invalid session) for
 // C2C and group @ messages. Sends are passive replies carrying the inbound
 // msg_id with an incrementing msg_seq; outside the reply window the platform
-// refuses and the reason is permanent. No buttons — the core numbers choices.
+// refuses and the reason is permanent. No buttons: the core numbers choices.
 // Wire details ported from @tencent-connect/qqbot-nodejs (MIT, see NOTICE).
 import { chunkMarkdown } from '../format.js'
 import { retryDelay, retryWait } from './retry.js'
@@ -54,7 +54,7 @@ export default {
     let sequence
     let sessionId
     // Passive replies reuse the inbound msg_id with a msg_seq that climbs
-    // per id — outside the window the platform refuses (permanent).
+    // per id; outside the window the platform refuses (permanent).
     const msgSeq = new Map()
     const lastMsgId = new Map()
 

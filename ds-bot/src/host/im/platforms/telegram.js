@@ -1,5 +1,5 @@
 // Telegram Bot API adapter: getUpdates long polling in, sendMessage out. Parts of the
-// protocol mapping follow dsh-im (MIT, © 2026 xmanrui — see NOTICE).
+// protocol mapping follow dsh-im (MIT, © 2026 xmanrui, see NOTICE).
 import { chunkTelegram } from '../format.js'
 import { retryDelay, retryWait } from './retry.js'
 
@@ -33,7 +33,7 @@ export default {
     const base = `${apiBase(env)}/bot${token}`
     const fileBase = `${apiBase(env)}/file/bot${token}`
     let stopped = false
-    // Every call in flight keeps its own controller, so stop() ends them all —
+    // Every call in flight keeps its own controller, so stop() ends them all:
     // a long poll must not outlive the adapter by ~65 s and collide with the
     // restarted one (Telegram answers 409).
     const inFlight = new Set()
