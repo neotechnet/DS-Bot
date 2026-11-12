@@ -510,7 +510,7 @@ test('a single-choice view card gets buttons, and a press answers the view', asy
   const card = s.fake.sent.find(entry => entry.buttons !== undefined)
   assert.ok(card, 'the view card has buttons')
   assert.deepEqual(card.buttons, [{ data: 'v:v1:0', label: 'Ship' }, { data: 'v:v1:1', label: 'Hold' }, { data: 't:v:v1', label: 'Type my own answer' }])
-  assert.match(card.text, /Chief asks: Ship it\?\nThe build is green\.\n1\. Ship\n2\. Hold - wait a day\n\(reply with the number\)/)
+  assert.equal(card.text, 'Chief asks: Ship it?\nThe build is green.\n\n1. Ship\n\n2. Hold - wait a day\n(reply with the number)', 'the card is laid out: a blank line before and between the options')
   await s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data: 'v:v1:1', messageId: 1 })
   assert.equal(s.rt.state.views.a, undefined, 'the press answers the view')
   assert.equal(s.agents.get('a')?.followed, 1)
@@ -594,6 +594,18 @@ test('a Telegram question card carries a fourth button that types an answer', as
   const card = s.fake.sent.find(entry => entry.buttons !== undefined)
   assert.deepEqual(card.buttons.map(button => button.data), ['q:q1:0', 'q:q1:1', 'q:q1:2', 't:q:q1'])
   assert.equal(card.buttons[3].label, 'Type my own answer')
+})
+
+test('a long card question is split at two sentences before it is sent', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  s.rt.state.questions.a = { id: 'q9', question: 'The build is green. The tests pass. Ship it now?', options: [{ label: 'Ship' }, { label: 'Hold' }] }
+  await s.rt.save()
+  await s.flush()
+  const card = s.fake.sent.find(entry => entry.buttons !== undefined)
+  assert.equal(card.text, 'Chief asks: The build is green. The tests pass.\n\nShip it now?\n\n1. Ship\n\n2. Hold\n(reply with the number)')
+  assert.deepEqual(card.buttons.map(button => button.label), ['Ship', 'Hold', 'Type my own answer'], 'labels and order are untouched')
 })
 
 test('the typed-answer button arms a reply prompt and the next text answers that card', async (t) => {

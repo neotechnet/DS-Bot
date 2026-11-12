@@ -276,6 +276,80 @@ export function chunkMarkdown(markdown, limit) {
   return chunks
 }
 
+// Card layout (Steve, 2026-11-12): at most two sentences per paragraph, and a blank
+// line before the first list item and between items. Only whitespace changes: a
+// sentence boundary inside a long paragraph becomes a blank line. A boundary is .!?
+// followed by space and a capital letter, or a CJK full stop, so decimals, versions
+// and URLs never split; inline code, fences, headings, tables and list items are
+// left as they are.
+const SENTENCE_GAP = /(?<=[.!?]["'”’)\]]*)(\s+)(?=["'“‘([]?\p{Lu})|(?<=[。！？])()(?=\S)/gu
+const SENTENCE_END = /(?:[.!?]["'”’)\]]*|[。！？])\s*$/u
+// A full stop after one of these ends no sentence.
+const ABBREVIATION = /\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|vs|etc|Inc|Ltd|No|e\.g|i\.e)\.["'”’)\]]*\s*$/i
+
+function layoutParagraph(lines) {
+  const pieces = []
+  for (const line of lines) {
+    // Code spans keep their length but can hold no sentence boundary.
+    const masked = line.replace(/`[^`]*`/g, span => '\u0001'.repeat(span.length))
+    let from = 0
+    for (const gap of masked.matchAll(SENTENCE_GAP)) {
+      if (ABBREVIATION.test(masked.slice(0, gap.index))) continue
+      pieces.push({ text: line.slice(from, gap.index), ends: true, sep: line.slice(gap.index, gap.index + gap[0].length) })
+      from = gap.index + gap[0].length
+    }
+    pieces.push({ text: line.slice(from), ends: SENTENCE_END.test(masked) && !ABBREVIATION.test(masked), sep: '\n' })
+  }
+  let count = 0
+  let out = ''
+  for (const [index, piece] of pieces.entries()) {
+    out += piece.text
+    if (index === pieces.length - 1) break
+    if (piece.ends) count += 1
+    if (piece.ends && count === 2) {
+      out += '\n\n'
+      count = 0
+    } else {
+      out += piece.sep
+    }
+  }
+  return out
+}
+
+export function cardLayout(markdown) {
+  const out = []
+  let paragraph = []
+  let fenced = false
+  const flush = () => {
+    if (paragraph.length > 0) out.push(layoutParagraph(paragraph))
+    paragraph = []
+  }
+  for (const line of String(markdown ?? '').split('\n')) {
+    if (line.startsWith('```')) {
+      flush()
+      fenced = !fenced
+      out.push(line)
+      continue
+    }
+    if (fenced) { out.push(line); continue }
+    if (line.trim() === '') { flush(); out.push(line); continue }
+    if (isListItem(line)) {
+      flush()
+      if (out.length > 0 && out.at(-1).trim() !== '') out.push('')
+      out.push(line)
+      continue
+    }
+    if (HEADING_RE.test(line) || isRule(line) || isTableRow(line)) {
+      flush()
+      out.push(line)
+      continue
+    }
+    paragraph.push(line)
+  }
+  flush()
+  return out.join('\n')
+}
+
 export function chunkTelegram(markdown, limit = 4096) {
   const chunks = []
   let html = ''

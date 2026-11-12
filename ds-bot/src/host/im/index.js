@@ -7,6 +7,7 @@ import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { replaceFile } from '../files.js'
 import { viewCardText } from '../parts.js'
+import { cardLayout } from './format.js'
 import { imPlatform, IM_PLATFORMS } from '../../shared/im-platforms.js'
 import { adapters } from './platforms/index.js'
 
@@ -696,7 +697,9 @@ export function install(rt) {
     approval: (id) => [{ data: `a:${id}:allow`, label: text('allow') }, { data: `a:${id}:reject`, label: text('reject') }],
   }
 
-  const sendCard = async (conn, cardKey, targets, body, given) => {
+  const sendCard = async (conn, cardKey, targets, written, given) => {
+    // Every card is laid out here, whichever Bot wrote it.
+    const body = cardLayout(written)
     // Every typeable card gets the typed-answer button here, so no caller can leave it out.
     const buttons = typeable(conn, cardKey) ? [...(given ?? []), typedButton(cardKey)] : given
     for (const { chatKey, chat } of targets) {

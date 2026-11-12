@@ -1,6 +1,44 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { chunkTelegram, toPlain, toTelegramHtml } from '../src/host/im/format.js'
+import { cardLayout, chunkTelegram, toPlain, toTelegramHtml } from '../src/host/im/format.js'
+
+test('card layout: a three-sentence paragraph gains exactly one break', () => {
+  assert.equal(cardLayout('One is here. Two is here. Three is here.'), 'One is here. Two is here.\n\nThree is here.')
+  assert.equal(cardLayout('A. B? C! D. E.'.replace(/(\w)/g, 'Word $1')), 'Word A. Word B?\n\nWord C! Word D.\n\nWord E.')
+})
+
+test('card layout: sentences across lines count toward the same paragraph', () => {
+  assert.equal(cardLayout('Chief asks: Ship it?\nThe build is green.\nThe tests pass.'), 'Chief asks: Ship it?\nThe build is green.\n\nThe tests pass.')
+})
+
+test('card layout: a paragraph followed straight by "1. " gains one blank line, items are spaced', () => {
+  assert.equal(cardLayout('Pick one:\n1. Ship\n2. Hold\n3. Ask me'), 'Pick one:\n\n1. Ship\n\n2. Hold\n\n3. Ask me')
+})
+
+test('card layout: decimals, URLs, versions, abbreviations and code never split', () => {
+  const kept = [
+    'Conversion rose 17.6% after the change, see https://example.com/Report.Final?x=1.2 for detail.',
+    'Upgrade from v0.3.5 to v0.3.6 first. Then restart. Mr. Smith agreed, e.g. Monday.',
+    'Run `a. B. C.` then `d. E.` now. Done.',
+  ]
+  assert.equal(cardLayout(kept[0]), kept[0], 'decimal and URL are byte-identical')
+  assert.equal(cardLayout(kept[1]), 'Upgrade from v0.3.5 to v0.3.6 first. Then restart.\n\nMr. Smith agreed, e.g. Monday.')
+  assert.equal(cardLayout(kept[2]), kept[2], 'sentence ends inside inline code are not boundaries')
+})
+
+test('card layout: an option list keeps its labels, numbers and order', () => {
+  const card = 'Chief asks: Deploy?\n1. deploy to production\n2. One customer first - starts with Acme. Then the rest. Then review.\n3. Hold\n(reply with the number)'
+  const laid = cardLayout(card)
+  assert.equal(laid, 'Chief asks: Deploy?\n\n1. deploy to production\n\n2. One customer first - starts with Acme. Then the rest. Then review.\n\n3. Hold\n(reply with the number)')
+  assert.deepEqual(laid.split('\n').filter(line => /^\d\. /.test(line)), card.split('\n').filter(line => /^\d\. /.test(line)))
+})
+
+test('card layout: a single sentence, correct text and code fences are unchanged', () => {
+  for (const text of ['Just one sentence here.', 'Two here. And two.\n\nThen one.', 'Intro:\n\n1. A\n\n2. B', '```\nOne. Two. Three. Four.\n```', '', 'Chinese 第一句。第二句。']) {
+    assert.equal(cardLayout(text), text)
+  }
+  assert.equal(cardLayout('第一句。第二句。第三句。'), '第一句。第二句。\n\n第三句。')
+})
 
 test('Markdown becomes Telegram HTML', () => {
   assert.equal(toTelegramHtml('**bold** and _ital_'), '<b>bold</b> and <i>ital</i>')
