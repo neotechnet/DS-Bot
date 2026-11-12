@@ -54,6 +54,8 @@ export function install(rt) {
         numbersMulti: 'reply with the numbers, separated by spaces',
         allow: 'Allow once',
         reject: 'Reject',
+        typeOwn: 'Type my own answer',
+        typePrompt: 'Type your answer and send it.',
       },
       zh: {
         requested: '已向 DS Bot 发出连接请求，请在电脑上的 DS Bot 设置 → IM 里允许。',
@@ -74,6 +76,8 @@ export function install(rt) {
         numbersMulti: '回复编号，多选用空格隔开',
         allow: '允许一次',
         reject: '拒绝',
+        typeOwn: '自己输入答案',
+        typePrompt: '输入你的答案后发送。',
       },
       'zh-TW': {
         requested: '已向 DS Bot 發出連線請求，請在電腦上的 DS Bot 設定 → IM 裡允許。',
@@ -94,6 +98,8 @@ export function install(rt) {
         numbersMulti: '回覆編號，多選用空格隔開',
         allow: '允許一次',
         reject: '拒絕',
+        typeOwn: '自己輸入答案',
+        typePrompt: '輸入你的答案後傳送。',
       },
       ja: {
         requested: 'DS Bot に接続リクエストを送信しました。PC の DS Bot 設定 → IM で許可してください。',
@@ -114,6 +120,8 @@ export function install(rt) {
         numbersMulti: '番号をスペース区切りで返信',
         allow: '1回許可',
         reject: '拒否',
+        typeOwn: '自分で回答を入力',
+        typePrompt: '回答を入力して送信してください。',
       },
       ko: {
         requested: 'DS Bot에 연결 요청을 보냈습니다. 컴퓨터의 DS Bot 설정 → IM에서 허용해 주세요.',
@@ -134,6 +142,8 @@ export function install(rt) {
         numbersMulti: '공백으로 구분하여 번호로 답장',
         allow: '한 번 허용',
         reject: '거부',
+        typeOwn: '직접 답변 입력',
+        typePrompt: '답변을 입력해 보내 주세요.',
       },
       es: {
         requested: 'Se envió una solicitud de conexión a DS Bot; permítela en Ajustes → IM en el ordenador.',
@@ -154,6 +164,8 @@ export function install(rt) {
         numbersMulti: 'responde con los números separados por espacios',
         allow: 'Permitir una vez',
         reject: 'Rechazar',
+        typeOwn: 'Escribir mi respuesta',
+        typePrompt: 'Escribe tu respuesta y envíala.',
       },
       fr: {
         requested: 'Une demande de connexion a été envoyée à DS Bot ; autorisez-la dans Paramètres → IM sur l’ordinateur.',
@@ -174,6 +186,8 @@ export function install(rt) {
         numbersMulti: 'répondez avec les numéros séparés par des espaces',
         allow: 'Autoriser une fois',
         reject: 'Refuser',
+        typeOwn: 'Écrire ma réponse',
+        typePrompt: 'Écrivez votre réponse et envoyez-la.',
       },
       de: {
         requested: 'Eine Verbindungsanfrage wurde an DS Bot gesendet; erlaube sie am Computer unter Einstellungen → IM.',
@@ -194,6 +208,8 @@ export function install(rt) {
         numbersMulti: 'mit durch Leerzeichen getrennten Nummern antworten',
         allow: 'Einmal erlauben',
         reject: 'Ablehnen',
+        typeOwn: 'Eigene Antwort schreiben',
+        typePrompt: 'Schreibe deine Antwort und sende sie.',
       },
     }
     return (table[lang] ?? table.en)[key] ?? key
@@ -489,6 +505,45 @@ export function install(rt) {
   }
   const sendCardReply = async (conn, chat, body) => sendText(conn, { key: chat.key, kind: chat.kind, title: chat.title }, body)
 
+  // A card whose typed-answer button was tapped, per chat: the next text there is
+  // its answer. One per chat, so a second tap replaces the first. Not persisted:
+  // after a restart the text is an ordinary message, which still closes the card.
+  const armed = new Map()
+  const armKey = (conn, chatKey) => `${conn.id}\n${chatKey}`
+  const typedButton = cardKey => ({ data: `t:${cardKey}`, label: text('typeOwn') })
+  const typeable = (conn, cardKey) => conn.platform === 'telegram' && (cardKey.startsWith('q:') || cardKey.startsWith('v:'))
+  const cardOpen = (conn, chatKey, cardKey) => openCard(conn, chatKey, cardKey) !== undefined
+    && (cardKey.startsWith('q:') ? questionById(cardKey.slice(2)) !== undefined : viewById(cardKey.slice(2)) !== undefined)
+  const armTyped = async (conn, chat, cardKey) => {
+    if (!cardOpen(conn, chat.key, cardKey)) {
+      await sendCardReply(conn, chat, text('stale'))
+      return
+    }
+    armed.set(armKey(conn, chat.key), cardKey)
+    enqueue(conn, chat.key, { chat: { key: chat.key, kind: chat.kind, title: chat.title }, text: text('typePrompt'), forceReply: true })
+  }
+  // The typed answer for the card this chat armed. False when that card is no
+  // longer open, so the text goes on as an ordinary message.
+  const answerTyped = async (conn, chat, cardKey, body) => {
+    if (!cardOpen(conn, chat.key, cardKey)) return false
+    try {
+      if (cardKey.startsWith('q:')) {
+        const found = questionById(cardKey.slice(2))
+        await rt.answerQuestion(found.sessionId, found.question.id, { selected: [], custom: body })
+      } else {
+        // A view has no free-text answer; the user's own message closes it as replied.
+        const found = viewById(cardKey.slice(2))
+        await rt.sendUser({ sessionId: found.sessionId, content: [{ type: 'text', text: body }], requestId: `im:${conn.platform}:${randomUUID()}` })
+      }
+    } catch (error) {
+      if (error?.code === 'bot/stale') return false
+      throw error
+    }
+    await settleCard(conn.id, cardKey, body)
+    await settledEdits(conn)
+    return true
+  }
+
   // The chat's newest still-open card, questions and approvals together: a bare
   // number answers whatever arrived last, not always a question.
   const newestOpenCard = (conn, chatKey) => {
@@ -533,6 +588,11 @@ export function install(rt) {
       const stopped = target.botId !== undefined ? await rt.stopChat(target.botId) : await rt.stopRoomWork(target.roomId)
       await sendText(conn, msg.chat, text(stopped ? 'stopped' : 'idle'))
       return
+    }
+    const armedCard = armed.get(armKey(conn, msg.chat.key))
+    if (armedCard !== undefined && body !== '') {
+      armed.delete(armKey(conn, msg.chat.key))
+      if (await answerTyped(conn, msg.chat, armedCard, body)) return
     }
     if (NUMBERS.test(body)) {
       const picked = body.trim().split(/\s+/).map(Number)
@@ -582,6 +642,10 @@ export function install(rt) {
     if (!paired(conn, action.sender.id)) return
     const data = String(action.data ?? '')
     const chat = { key: action.chat.key, kind: action.chat.kind, title: action.chat.title }
+    if (data.startsWith('t:') && data.length > 4) {
+      await armTyped(conn, chat, data.slice(2))
+      return
+    }
     // Button data is `<kind>:<id>:<choice>`; the id is everything between the
     // first and the last colon, so an id with a colon in it still parses.
     const cut = data.lastIndexOf(':')
@@ -632,7 +696,9 @@ export function install(rt) {
     approval: (id) => [{ data: `a:${id}:allow`, label: text('allow') }, { data: `a:${id}:reject`, label: text('reject') }],
   }
 
-  const sendCard = async (conn, cardKey, targets, body, buttons) => {
+  const sendCard = async (conn, cardKey, targets, body, given) => {
+    // Every typeable card gets the typed-answer button here, so no caller can leave it out.
+    const buttons = typeable(conn, cardKey) ? [...(given ?? []), typedButton(cardKey)] : given
     for (const { chatKey, chat } of targets) {
       sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body, buttons, (sent) => {
         void markCard(conn.id, cardKey, chatKey, sent?.messageId, body)

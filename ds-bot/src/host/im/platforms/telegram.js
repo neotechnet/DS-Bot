@@ -193,13 +193,15 @@ export default {
     }
     void poll()
 
-    const send = async (chat, { text, buttons }) => {
+    const send = async (chat, { text, buttons, forceReply }) => {
       const chunks = chunkTelegram(text, TEXT_LIMIT)
       let messageId
       for (const [index, chunk] of chunks.entries()) {
-        const markup = index === chunks.length - 1 && buttons?.length > 0
+        const last = index === chunks.length - 1
+        // An inline keyboard and a reply prompt cannot share one message.
+        const markup = last && buttons?.length > 0
           ? { reply_markup: { inline_keyboard: buttons.map(button => [{ text: button.label, callback_data: button.data }]) } }
-          : {}
+          : last && forceReply === true ? { reply_markup: { force_reply: true } } : {}
         const sendOne = async (body) => {
           try {
             return await call('sendMessage', { chat_id: chat.key, text: body, parse_mode: 'HTML', ...markup })
