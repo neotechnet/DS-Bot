@@ -509,7 +509,7 @@ test('a single-choice view card gets buttons, and a press answers the view', asy
   await showView(s)
   const card = s.fake.sent.find(entry => entry.buttons !== undefined)
   assert.ok(card, 'the view card has buttons')
-  assert.deepEqual(card.buttons, [{ data: 'v:v1:0', label: 'Ship' }, { data: 'v:v1:1', label: 'Hold' }])
+  assert.deepEqual(card.buttons, [{ data: 'v:v1:0', label: 'Ship' }, { data: 'v:v1:1', label: 'Hold' }, { data: 't:v:v1', label: 'Type my own answer' }])
   assert.match(card.text, /Chief asks: Ship it\?\nThe build is green\.\n1\. Ship\n2\. Hold - wait a day\n\(reply with the number\)/)
   await s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data: 'v:v1:1', messageId: 1 })
   assert.equal(s.rt.state.views.a, undefined, 'the press answers the view')
@@ -570,6 +570,123 @@ test('a view answered on the computer settles its IM card', async (t) => {
   await s.flush()
   assert.equal(s.fake.edited.length, 1, 'the IM copy is edited shut')
   assert.match(s.fake.edited[0].text, /answered/)
+})
+
+const QUESTION = { id: 'q1', question: 'Ship it?', options: [{ label: 'deploy to production' }, { label: 'One customer first' }, { label: 'Hold' }] }
+const askQuestion = async (s) => {
+  s.rt.state.questions.a = structuredClone(QUESTION)
+  await s.rt.save()
+  await s.flush()
+}
+const press = (s, data) => s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data, messageId: 1 })
+const answerOf = message => JSON.parse(message.content[0].text).answers[0]
+const followups = (s) => {
+  const got = []
+  s.agentOf('a').followup = (message) => { got.push(message) }
+  return got
+}
+
+test('a Telegram question card carries a fourth button that types an answer', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const card = s.fake.sent.find(entry => entry.buttons !== undefined)
+  assert.deepEqual(card.buttons.map(button => button.data), ['q:q1:0', 'q:q1:1', 'q:q1:2', 't:q:q1'])
+  assert.equal(card.buttons[3].label, 'Type my own answer')
+})
+
+test('the typed-answer button arms a reply prompt and the next text answers that card', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  await press(s, 't:q:q1')
+  await s.flush()
+  const prompt = s.fake.sent.at(-1)
+  assert.equal(prompt.forceReply, true, 'the prompt asks Telegram for a reply box')
+  assert.equal(prompt.buttons, undefined, 'a reply prompt carries no inline keyboard')
+  assert.ok(s.rt.state.questions.a !== undefined, 'arming answers nothing yet')
+  s.prompts.length = 0
+  await dm(s, 'u1', 'Ship to Acme only, then wait a day')
+  assert.equal(s.rt.state.questions.a, undefined, 'the typed text answers the card')
+  assert.equal(got.length, 1, 'the same Bot gets the answer')
+  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: [], custom: 'Ship to Acme only, then wait a day' })
+  assert.equal(s.prompts.length, 0, 'the text is not also sent as an ordinary message')
+  await s.flush()
+  assert.equal(s.fake.edited.length, 1, 'the card is edited shut')
+  s.prompts.length = 0
+  await dm(s, 'u1', 'and one more thing')
+  assert.equal(s.prompts.length, 1, 'the arm is spent: the next text is an ordinary message')
+})
+
+test('ordinary chat text with no armed card is untouched', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  s.prompts.length = 0
+  await dm(s, 'u1', 'what does this card mean?')
+  assert.equal(got.length, 0, 'nothing answers the card')
+  assert.ok(s.rt.state.questions.a !== undefined, 'the card stays open')
+  assert.equal(s.prompts.length, 1, 'the text reaches the Bot as an ordinary message')
+  assert.deepEqual(s.prompts[0].content, [{ type: 'text', text: 'what does this card mean?' }])
+})
+
+test('a typed answer never binds to a card that closed after it was armed', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  await press(s, 't:q:q1')
+  delete s.rt.state.questions.a
+  await s.rt.save()
+  await s.flush()
+  s.prompts.length = 0
+  await dm(s, 'u1', 'late text')
+  assert.equal(got.length, 0, 'the closed card is not answered')
+  assert.equal(s.prompts.length, 1, 'the text goes on as an ordinary message')
+})
+
+test('a plain number still answers the card on Telegram', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  await dm(s, 'u1', '2')
+  assert.equal(s.rt.state.questions.a, undefined)
+  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: ['One customer first'] })
+})
+
+test('a second arm replaces the first, and a typed view answer reaches the Bot', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await showView(s)
+  await press(s, 't:v:v1')
+  await press(s, 't:v:v1')
+  await s.flush()
+  assert.equal(s.fake.sent.filter(entry => entry.forceReply === true).length, 2)
+  s.prompts.length = 0
+  await dm(s, 'u1', 'neither, ask me tomorrow')
+  assert.equal(s.prompts.length, 1, 'the typed text goes to the Bot once')
+  assert.deepEqual(s.prompts[0].content, [{ type: 'text', text: 'neither, ask me tomorrow' }])
+  await s.flush()
+  assert.equal(s.fake.edited.length, 1, 'the view card is edited shut')
+})
+
+test('arming a card that is already answered gets the stale text', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await press(s, 't:q:gone')
+  await s.flush()
+  assert.ok(s.fake.sent.some(entry => /already answered/.test(entry.text ?? '')))
+  assert.ok(!s.fake.sent.some(entry => entry.forceReply === true), 'no reply prompt for a closed card')
 })
 
 test('a read-only host runs no adapter; becoming writable starts it', async (t) => {

@@ -135,6 +135,20 @@ test('send renders HTML, chunks long text, buttons go on the last chunk', async 
   } finally { api.close() }
 })
 
+test('a reply prompt goes with force_reply and no inline keyboard', async () => {
+  const api = await fakeApi()
+  try {
+    const handle = telegram.connect({ token: 'TOKEN' }, env(api.api), { onMessage: () => {}, onAction: () => {}, onStatus: () => {} })
+    await handle.send({ key: '5' }, { text: 'Type your answer and send it.', forceReply: true })
+    const sends = api.calls.filter(call => call.method === 'sendMessage')
+    assert.equal(sends.length, 1)
+    assert.deepEqual(sends[0].params.reply_markup, { force_reply: true })
+    await handle.send({ key: '5' }, { text: 'plain' })
+    assert.equal(api.calls.filter(call => call.method === 'sendMessage')[1].params.reply_markup, undefined, 'ordinary sends carry no reply prompt')
+    handle.stop()
+  } finally { api.close() }
+})
+
 test('a chunk Telegram cannot parse goes again as plain text', async () => {
   const api = await fakeApi()
   try {
