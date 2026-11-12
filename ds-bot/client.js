@@ -25374,7 +25374,11 @@ var IM_PLATFORMS = [
   {
     id: "telegram",
     name: "Telegram",
-    fields: [{ key: "token", label: "Bot token", secret: true }],
+    fields: [
+      { key: "token", label: "Bot token", secret: true },
+      // Turn text mirrored to the chat; cards always go. The first option is the default.
+      { key: "notify", label: "Messages", options: [["bookends", "First and last"], ["all", "Everything"], ["cards", "Cards only"]] }
+    ],
     buttons: true,
     groups: true,
     help: "https://t.me/BotFather"

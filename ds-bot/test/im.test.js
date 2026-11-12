@@ -201,6 +201,7 @@ test('outbound: assistant text and member lines go out; hidden turns, user and s
   t.after(s.stop)
   const conn = await add(s)
   const one = s.rt.state.im.connections[conn.id]
+  one.settings.notify = 'all'
   one.paired.push({ id: 'u1', name: 'U1', at: 1 })
   await s.rt.save()
   await dm(s, 'u1', 'hi')
@@ -223,6 +224,96 @@ test('outbound: assistant text and member lines go out; hidden turns, user and s
   assert.equal(s.fake.sent[1].text, '**Writer**: member spoke')
   assert.equal(s.fake.sent[1].chat.key, 'g1')
 })
+
+// A paired DM on a fresh Telegram connection, with `notify` set when given.
+async function notifyChat(notify) {
+  const s = await start()
+  const conn = await add(s)
+  const one = s.rt.state.im.connections[conn.id]
+  if (notify !== undefined) one.settings.notify = notify
+  one.paired.push({ id: 'u1', name: 'U1', at: 1 })
+  await s.rt.save()
+  await dm(s, 'u1', 'hi')
+  s.fake.sent.length = 0
+  return { s, one }
+}
+const say = (s, ...texts) => s.emitEvent('a', 'assistant/message', { message: { content: texts.map(text => ({ type: 'text', text })) } })
+const texts = s => s.fake.sent.filter(entry => entry.buttons === undefined).map(entry => entry.text)
+
+test('notify bookends, the default: a turn sends its first and last text at turn/end and drops the middle', async (t) => {
+  const { s, one } = await notifyChat()
+  t.after(s.stop)
+  assert.equal(one.settings.notify, 'bookends', 'a new Telegram connection starts on bookends')
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'Starting on it.', 'Reading the files.')
+  say(s, 'Running the tests.')
+  say(s, 'Done: all green.')
+  await s.flush()
+  assert.deepEqual(texts(s), [], 'nothing goes out while the turn runs')
+  s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), ['Starting on it.', 'Done: all green.'])
+})
+
+test('notify bookends: a turn with one text block sends it once', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'Only this.')
+  s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), ['Only this.'])
+})
+
+test('notify bookends: a turn that never ended does not carry its text into the next', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'Old turn text.')
+  s.emitEvent('a', 'turn/start', { turn: 2 })
+  say(s, 'New turn text.')
+  s.emitEvent('a', 'turn/end', { turn: 2, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), ['New turn text.'])
+})
+
+test('notify all: every text block goes out as it arrives, as before', async (t) => {
+  const { s } = await notifyChat('all')
+  t.after(s.stop)
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'one', 'two')
+  say(s, 'three')
+  await s.flush()
+  assert.deepEqual(texts(s), ['one', 'two', 'three'])
+  s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), ['one', 'two', 'three'], 'turn/end adds nothing')
+})
+
+test('notify cards: no turn text is sent', async (t) => {
+  const { s } = await notifyChat('cards')
+  t.after(s.stop)
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'one', 'two')
+  s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), [])
+})
+
+for (const notify of ['bookends', 'cards']) {
+  test(`notify ${notify}: a card opened mid turn still goes out at once`, async (t) => {
+    const { s } = await notifyChat(notify)
+    t.after(s.stop)
+    s.emitEvent('a', 'turn/start', { turn: 1 })
+    say(s, 'Asking you now.')
+    s.rt.state.questions.a = { id: 'q1', question: 'Ship it?', options: [{ label: 'Ship' }, { label: 'Hold' }] }
+    await s.rt.save()
+    await s.flush()
+    const card = s.fake.sent.find(entry => entry.buttons !== undefined)
+    assert.ok(card, 'the card is sent before the turn ends')
+    assert.match(card.text, /Ship it\?/)
+  })
+}
 
 test('IM user messages are tagged by seq for the current part; a part that is no longer current drops out', async (t) => {
   const s = await start()
@@ -772,6 +863,7 @@ test('a permanent send error shows in the status and is not retried; a network e
   t.after(s.stop)
   const conn = await add(s)
   const one = s.rt.state.im.connections[conn.id]
+  one.settings.notify = 'all'
   one.paired.push({ id: 'u1', name: 'U1', at: 1 })
   await s.rt.save()
   await dm(s, 'u1', 'hi')
