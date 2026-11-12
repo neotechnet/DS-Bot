@@ -40,7 +40,7 @@ export function install(rt) {
         requested: 'A connection request was sent to DS Bot; allow it in Settings → IM on the computer.',
         unbound: 'This IM bot is not bound to a Bot yet; pick one in DS Bot Settings → IM.',
         unboundGroup: 'This group is not bound yet; pick a group or a Bot for it in DS Bot Settings → IM.',
-        connected: `Connected — you can talk to ${values.target} now.`,
+        connected: `Connected: you can talk to ${values.target} now.`,
         stopped: 'Stopped.',
         idle: 'Nothing is running.',
         stale: 'This card was already answered.',
@@ -48,8 +48,8 @@ export function install(rt) {
         greeting: `Hello, I am ${values.name}.`,
         question: `${values.bot} asks: `,
         approval: `${values.bot} asks for approval: `,
-        secretAsk: `${values.bot} needs the key ${values.name} — fill it on the computer or the phone app.`,
-        viewShow: `${values.bot} shared a card — answer it on the computer or the phone app.`,
+        secretAsk: `${values.bot} needs the key ${values.name}: fill it on the computer or the phone app.`,
+        viewShow: `${values.bot} shared a card: answer it on the computer or the phone app.`,
         answered: 'answered',
         numbers: 'reply with the number',
         numbersMulti: 'reply with the numbers, separated by spaces',
@@ -150,7 +150,7 @@ export function install(rt) {
         requested: 'Se envió una solicitud de conexión a DS Bot; permítela en Ajustes → IM en el ordenador.',
         unbound: 'Este bot de IM aún no está vinculado a un Bot; elige uno en Ajustes de DS Bot → IM.',
         unboundGroup: 'Este grupo aún no está vinculado; elige un grupo o un Bot en Ajustes de DS Bot → IM.',
-        connected: `Conectado — ya puedes hablar con ${values.target}.`,
+        connected: `Conectado: ya puedes hablar con ${values.target}.`,
         stopped: 'Detenido.',
         idle: 'No hay nada en curso.',
         stale: 'Esta tarjeta ya fue respondida.',
@@ -158,8 +158,8 @@ export function install(rt) {
         greeting: `Hola, soy ${values.name}.`,
         question: `${values.bot} pregunta: `,
         approval: `${values.bot} pide aprobación: `,
-        secretAsk: `${values.bot} necesita la clave ${values.name} — rellénala en el ordenador o en la app móvil.`,
-        viewShow: `${values.bot} compartió una tarjeta — respóndela en el ordenador o en la app móvil.`,
+        secretAsk: `${values.bot} necesita la clave ${values.name}: rellénala en el ordenador o en la app móvil.`,
+        viewShow: `${values.bot} compartió una tarjeta: respóndela en el ordenador o en la app móvil.`,
         answered: 'respondido',
         numbers: 'responde con el número',
         numbersMulti: 'responde con los números separados por espacios',
@@ -172,7 +172,7 @@ export function install(rt) {
         requested: 'Une demande de connexion a été envoyée à DS Bot ; autorisez-la dans Paramètres → IM sur l’ordinateur.',
         unbound: 'Ce bot IM n’est pas encore lié à un Bot ; choisissez-en un dans Paramètres DS Bot → IM.',
         unboundGroup: 'Ce groupe n’est pas encore lié ; choisissez un groupe ou un Bot dans Paramètres DS Bot → IM.',
-        connected: `Connecté — vous pouvez maintenant parler à ${values.target}.`,
+        connected: `Connecté : vous pouvez maintenant parler à ${values.target}.`,
         stopped: 'Arrêté.',
         idle: 'Rien n’est en cours.',
         stale: 'Cette carte a déjà reçu une réponse.',
@@ -180,8 +180,8 @@ export function install(rt) {
         greeting: `Bonjour, je suis ${values.name}.`,
         question: `${values.bot} demande : `,
         approval: `${values.bot} demande une approbation : `,
-        secretAsk: `${values.bot} a besoin de la clé ${values.name} — renseignez-la sur l’ordinateur ou l’application mobile.`,
-        viewShow: `${values.bot} a partagé une carte — répondez-y sur l’ordinateur ou l’application mobile.`,
+        secretAsk: `${values.bot} a besoin de la clé ${values.name} : renseignez-la sur l’ordinateur ou l’application mobile.`,
+        viewShow: `${values.bot} a partagé une carte : répondez-y sur l’ordinateur ou l’application mobile.`,
         answered: 'répondu',
         numbers: 'répondez avec le numéro',
         numbersMulti: 'répondez avec les numéros séparés par des espaces',
@@ -194,7 +194,7 @@ export function install(rt) {
         requested: 'Eine Verbindungsanfrage wurde an DS Bot gesendet; erlaube sie am Computer unter Einstellungen → IM.',
         unbound: 'Dieser IM-Bot ist noch keinem Bot zugewiesen; wähle einen in den DS Bot-Einstellungen → IM.',
         unboundGroup: 'Diese Gruppe ist noch nicht zugewiesen; wähle eine Gruppe oder einen Bot in den DS Bot-Einstellungen → IM.',
-        connected: `Verbunden — du kannst jetzt mit ${values.target} sprechen.`,
+        connected: `Verbunden: du kannst jetzt mit ${values.target} sprechen.`,
         stopped: 'Gestoppt.',
         idle: 'Aktuell läuft nichts.',
         stale: 'Diese Karte wurde bereits beantwortet.',
@@ -202,8 +202,8 @@ export function install(rt) {
         greeting: `Hallo, ich bin ${values.name}.`,
         question: `${values.bot} fragt: `,
         approval: `${values.bot} bittet um Freigabe: `,
-        secretAsk: `${values.bot} benötigt den Schlüssel ${values.name} — gib ihn am Computer oder in der Smartphone-App ein.`,
-        viewShow: `${values.bot} hat eine Karte geteilt — beantworte sie am Computer oder in der Smartphone-App.`,
+        secretAsk: `${values.bot} benötigt den Schlüssel ${values.name}: gib ihn am Computer oder in der Smartphone-App ein.`,
+        viewShow: `${values.bot} hat eine Karte geteilt: beantworte sie am Computer oder in der Smartphone-App.`,
         answered: 'beantwortet',
         numbers: 'mit der Nummer antworten',
         numbersMulti: 'mit durch Leerzeichen getrennten Nummern antworten',
@@ -598,8 +598,8 @@ export function install(rt) {
     if (NUMBERS.test(body)) {
       const picked = body.trim().split(/\s+/).map(Number)
       const held = newestOpenCard(conn, msg.chat.key)
-      // Anything that does not clearly answer the newest open card — a stale
-      // source, an out-of-range pick, several picks on a single choice — is a
+      // Anything that does not clearly answer the newest open card (a stale
+      // source, an out-of-range pick, several picks on a single choice) is a
       // normal message for the Bot, never swallowed and never 'stale'.
       if (held !== undefined && held.cardKey.startsWith('q:')) {
         const found = questionById(held.cardKey.slice(2))
@@ -680,7 +680,7 @@ export function install(rt) {
   // ------------------------------------------------------------------ cards
   const cardText = {
     question: (bot, question) => {
-      const options = (question.options ?? []).map((option, index) => `${index + 1}. ${option.label}${option.description ? ` — ${option.description}` : ''}`).join('\n')
+      const options = (question.options ?? []).map((option, index) => `${index + 1}. ${option.label}${option.description ? ` - ${option.description}` : ''}`).join('\n')
       const hint = question.multiSelect === true ? text('numbersMulti') : text('numbers')
       return `${text('question', { bot })}${question.question}${question.detail ? `\n${question.detail}` : ''}\n${options}\n(${hint})`
     },
@@ -689,7 +689,7 @@ export function install(rt) {
       const detail = choice.texts.join('\n')
       return `${text('question', { bot })}${title ?? ''}${detail !== '' ? `\n${detail}` : ''}\n${options}\n(${text('numbers')})`
     },
-    approval: (bot, entry) => `${text('approval', { bot })}${entry.tool}${entry.reason ? ` — ${entry.reason}` : ''}${entry.detail?.text ? `\n${entry.detail.text}` : ''}${entry.detail?.code ? `\n${entry.detail.code}` : ''}`,
+    approval: (bot, entry) => `${text('approval', { bot })}${entry.tool}${entry.reason ? `: ${entry.reason}` : ''}${entry.detail?.text ? `\n${entry.detail.text}` : ''}${entry.detail?.code ? `\n${entry.detail.code}` : ''}`,
   }
   const cardButtons = {
     question: (question) => (question.multiSelect === true ? undefined : (question.options ?? []).map((option, index) => ({ data: `q:${question.id}:${index}`, label: option.label }))),
@@ -727,7 +727,7 @@ export function install(rt) {
         const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.question(question) : undefined
         await sendCard(conn, cardKey, listeners(conn, { botId }), cardText.question(bot.name, question), buttons)
       }
-      // Secret requests: text only — the key is typed on the computer or phone.
+      // Secret requests: text only: the key is typed on the computer or phone.
       for (const [botId, list] of Object.entries(state.secretRequests ?? {})) {
         const bot = rt.botOf(botId)
         if (bot === undefined) continue
@@ -767,7 +767,7 @@ export function install(rt) {
         const chat = conn.chats?.[entry.chatKey]
         if (chat === undefined) continue
         entry.edited = true
-        const body = entry.text !== undefined ? `${entry.text}\n— ${entry.answer}` : `(${text('answered')})`
+        const body = entry.text !== undefined ? `${entry.text}\n- ${entry.answer}` : `(${text('answered')})`
         runner.handle.edit({ key: entry.chatKey, kind: chat.kind, title: chat.title }, entry.messageId, { text: body }).catch(() => {})
         scheduleWrite(conn.id)
       }
@@ -1112,7 +1112,7 @@ export function install(rt) {
       const login = await adapter.loginWait(String(body.loginId ?? ''), env)
       if (login.status !== 'done') return { status: login.status }
       // Confirmed: create the connection with the platform credentials the
-      // login returned, paired with the scanning owner — no review needed.
+      // login returned, paired with the scanning owner; no review needed.
       const conn = {
         id: `im_${randomBytes(4).toString('hex')}`,
         platform: platform.id,

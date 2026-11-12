@@ -198,7 +198,7 @@ export function toPlain(markdown) {
 const points = text => Array.from(text).length
 
 // Split a block that alone exceeds the limit: text at line boundaries (a line that
-// is still too long is cut where it lands — Telegram answers it as plain text), a
+// is still too long is cut where it lands; Telegram answers it as plain text), a
 // code fence into several fenced blocks.
 function forceCut(block, limit) {
   if (block.kind !== 'code') {

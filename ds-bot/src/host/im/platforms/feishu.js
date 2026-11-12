@@ -1,4 +1,4 @@
-// Feishu / Lark: the long connection speaks protobuf pbbp2 frames — control
+// Feishu / Lark: the long connection speaks protobuf pbbp2 frames: control
 // pings answered with pong, data frames ACKed by sending the frame back with a
 // {"code":200} payload and a biz_rt header; split payloads reassemble by
 // sum/seq. p2p messages are direct; a group message counts when the bot's
