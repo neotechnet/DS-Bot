@@ -1157,22 +1157,51 @@ export function install(rt) {
   }
 
   // ----------------------------------------------------------------- outbound
+  // How much turn text a connection mirrors. Only a platform that declares the
+  // `notify` field filters; every other platform keeps sending everything.
+  const notifyOf = (conn) => {
+    const field = imPlatform(conn.platform)?.fields.find(entry => entry.key === 'notify')
+    if (field === undefined) return 'all'
+    return field.options.some(([id]) => id === conn.settings?.notify) ? conn.settings.notify : field.options[0][0]
+  }
+  const mirror = (botId, body, wants) => {
+    for (const conn of Object.values(connections())) {
+      if (!runners.has(conn.id) || !wants(notifyOf(conn))) continue
+      for (const { chatKey, chat } of listeners(conn, { botId })) sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body)
+    }
+  }
+  // Per Session, the running turn's first and last text block, sent at turn/end to
+  // `bookends` connections. Held in memory only and dropped at the next turn/start,
+  // so a turn that never ended cannot carry its text into the next one.
+  const bookends = new Map()
   ctx.on('session/event', (session, event) => {
     const botId = rt.chatOwners.get(session.id)
     if (botId === undefined) {
       imVia.delete(session.id)
+      bookends.delete(session.id)
       return
     }
     const rpcId = event.type === 'user/message' ? event.data?.source?.rpcId : undefined
     if (typeof rpcId === 'string' && rpcId.startsWith('im:') && Number.isInteger(event.seq)) {
       imVia.set(session.id, { ...imVia.get(session.id), [event.seq]: rpcId.split(':')[1] })
     }
+    if (event.type === 'turn/start') bookends.delete(session.id)
     for (const item of rt.displayItems(session.id, [event])) {
-      if (item.kind !== 'bot' && item.kind !== 'view') continue
-      const body = item.kind === 'bot' ? item.text : viewCardText({ title: item.title, view: item.view }) || (item.title ?? '')
-      for (const conn of Object.values(connections())) {
-        if (!runners.has(conn.id)) continue
-        for (const { chatKey, chat } of listeners(conn, { botId })) sendTo(conn, chatKey, { key: chatKey, kind: chat.kind, title: chat.title }, body)
+      if (item.kind === 'view') {
+        mirror(botId, viewCardText({ title: item.title, view: item.view }) || (item.title ?? ''), () => true)
+        continue
+      }
+      if (item.kind !== 'bot') continue
+      mirror(botId, item.text, mode => mode === 'all')
+      const held = bookends.get(session.id)
+      if (held === undefined) bookends.set(session.id, { botId, first: item.text })
+      else held.last = item.text
+    }
+    if (event.type === 'turn/end') {
+      const held = bookends.get(session.id)
+      bookends.delete(session.id)
+      if (held !== undefined) {
+        for (const body of held.last === undefined ? [held.first] : [held.first, held.last]) mirror(held.botId, body, mode => mode === 'bookends')
       }
     }
   })
