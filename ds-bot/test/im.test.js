@@ -708,7 +708,8 @@ test('the typed-answer button arms a reply prompt and the next text answers that
   await press(s, 't:q:q1')
   await s.flush()
   const prompt = s.fake.sent.at(-1)
-  assert.equal(prompt.forceReply, true, 'the prompt asks Telegram for a reply box')
+  assert.equal(prompt.text, 'Type your answer and send it.')
+  assert.equal(prompt.forceReply, false, 'a direct chat gets no reply box: the arm alone matches the answer')
   assert.equal(prompt.buttons, undefined, 'a reply prompt carries no inline keyboard')
   assert.ok(s.rt.state.questions.a !== undefined, 'arming answers nothing yet')
   s.prompts.length = 0
@@ -722,6 +723,25 @@ test('the typed-answer button arms a reply prompt and the next text answers that
   s.prompts.length = 0
   await dm(s, 'u1', 'and one more thing')
   assert.equal(s.prompts.length, 1, 'the arm is spent: the next text is an ordinary message')
+})
+
+test('in a group the typed-answer prompt keeps the reply box, and the reply answers the card', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  const conn = await pairedChat(s)
+  await gm(s, 'u1', '@fakebot hello')
+  await s.rt.imEndpoint('im-chat', { id: conn.id, chatKey: 'g1', target: { botId: 'a' } })
+  s.fake.sent.length = 0
+  await askQuestion(s)
+  assert.ok(s.fake.sent.some(entry => entry.chat?.key === 'g1' && entry.buttons !== undefined), 'the card reaches the group')
+  const got = followups(s)
+  await s.fake.handlers.onAction({ chat: { key: 'g1', kind: 'group', title: 'Group One' }, sender: { id: 'u1', name: 'U1' }, data: 't:q:q1', messageId: 1 })
+  await s.flush()
+  const prompt = s.fake.sent.at(-1)
+  assert.equal(prompt.chat.key, 'g1')
+  assert.equal(prompt.forceReply, true, 'a group needs the reply box, or the unaddressed answer is dropped')
+  await gm(s, 'u1', 'Ship to Acme only')
+  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: [], custom: 'Ship to Acme only' })
 })
 
 test('ordinary chat text with no armed card is untouched', async (t) => {
@@ -773,7 +793,7 @@ test('a second arm replaces the first, and a typed view answer reaches the Bot',
   await press(s, 't:v:v1')
   await press(s, 't:v:v1')
   await s.flush()
-  assert.equal(s.fake.sent.filter(entry => entry.forceReply === true).length, 2)
+  assert.equal(s.fake.sent.filter(entry => entry.text === 'Type your answer and send it.').length, 2)
   s.prompts.length = 0
   await dm(s, 'u1', 'neither, ask me tomorrow')
   assert.equal(s.prompts.length, 1, 'the typed text goes to the Bot once')
