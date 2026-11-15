@@ -521,7 +521,10 @@ export function install(rt) {
       return
     }
     armed.set(armKey(conn, chat.key), cardKey)
-    enqueue(conn, chat.key, { chat: { key: chat.key, kind: chat.kind, title: chat.title }, text: text('typePrompt'), forceReply: true })
+    // Only a group needs the reply box: there an unaddressed message is dropped
+    // before the armed check, and a reply to the bot counts as addressed. In a
+    // direct chat the armed map alone matches the answer, so the box is noise.
+    enqueue(conn, chat.key, { chat: { key: chat.key, kind: chat.kind, title: chat.title }, text: text('typePrompt'), forceReply: chat.kind === 'group' })
   }
   // The typed answer for the card this chat armed. False when that card is no
   // longer open, so the text goes on as an ordinary message.
