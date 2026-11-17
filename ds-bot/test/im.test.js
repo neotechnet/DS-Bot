@@ -315,6 +315,51 @@ for (const notify of ['bookends', 'cards']) {
   })
 }
 
+// Every card kind a Bot can open mid turn, opened on the test runtime.
+const openCards = {
+  question: async (s) => {
+    s.rt.state.questions.a = { id: 'q1', question: 'Ship it?', options: [{ label: 'Ship' }, { label: 'Hold' }] }
+    await s.rt.save()
+  },
+  view: async (s) => {
+    s.rt.state.views = { a: structuredClone(PICK_VIEW) }
+    await s.rt.save()
+  },
+  approval: async (s) => {
+    void s.fireApprovals({ agent: { id: 'a' }, toolName: 'bash', reason: 'r', signal: new AbortController().signal }, () => new Promise(() => {}))
+  },
+}
+for (const [kind, open] of Object.entries(openCards)) {
+  test(`notify bookends: the text written before a ${kind} card goes out before the card, the rest at turn/end`, async (t) => {
+    const { s } = await notifyChat('bookends')
+    t.after(s.stop)
+    s.emitEvent('a', 'turn/start', { turn: 1 })
+    say(s, 'Here is the job.', 'Some middle detail.', 'Pick below.')
+    await open(s)
+    await s.flush()
+    const at = s.fake.sent.findIndex(entry => entry.buttons !== undefined)
+    assert.ok(at !== -1, 'the card is sent before the turn ends')
+    assert.deepEqual(s.fake.sent.slice(0, at).map(entry => entry.text), ['Here is the job.', 'Pick below.'], 'the held text leads the card')
+    say(s, 'Waiting on your pick.')
+    s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+    await s.flush()
+    assert.deepEqual(texts(s), ['Here is the job.', 'Pick below.', 'Waiting on your pick.'], 'nothing is sent twice and the later text still follows')
+  })
+}
+
+test('notify cards: a card mid turn still sends no turn text', async (t) => {
+  const { s } = await notifyChat('cards')
+  t.after(s.stop)
+  s.emitEvent('a', 'turn/start', { turn: 1 })
+  say(s, 'Here is the job.')
+  await openCards.question(s)
+  await s.flush()
+  s.emitEvent('a', 'turn/end', { turn: 1, reason: 'stop' })
+  await s.flush()
+  assert.deepEqual(texts(s), [])
+  assert.ok(s.fake.sent.some(entry => entry.buttons !== undefined), 'the card is sent')
+})
+
 test('IM user messages are tagged by seq for the current part; a part that is no longer current drops out', async (t) => {
   const s = await start()
   t.after(s.stop)

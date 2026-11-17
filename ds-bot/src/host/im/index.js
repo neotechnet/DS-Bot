@@ -728,6 +728,7 @@ export function install(rt) {
         const bot = rt.botOf(botId)
         if (bot === undefined) continue
         const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.question(question) : undefined
+        flushHeld(botId)
         await sendCard(conn, cardKey, listeners(conn, { botId }), cardText.question(bot.name, question), buttons)
       }
       // Secret requests: text only: the key is typed on the computer or phone.
@@ -737,6 +738,7 @@ export function install(rt) {
         for (const request of list) {
           const cardKey = `s:${request.id}`
           if (request.status !== 'pending' || data.cards[cardKey] !== undefined) continue
+          flushHeld(botId)
           await sendCard(conn, cardKey, listeners(conn, { botId }), text('secretAsk', { bot: bot.name, name: request.name }))
         }
       }
@@ -747,6 +749,7 @@ export function install(rt) {
         const botId = rt.chatOwners.get(sessionId)
         const bot = rt.botOf(botId)
         if (bot === undefined) continue
+        flushHeld(botId)
         const choice = choiceOf(view.view)
         if (choice !== undefined) {
           const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.view(view.id, choice) : undefined
@@ -1177,6 +1180,18 @@ export function install(rt) {
   // `bookends` connections. Held in memory only and dropped at the next turn/start,
   // so a turn that never ended cannot carry its text into the next one.
   const bookends = new Map()
+  const sendHeld = held => {
+    for (const body of held.last === undefined ? [held.first] : [held.first, held.last]) mirror(held.botId, body, mode => mode === 'bookends')
+  }
+  // A card must never overtake the text its Bot wrote before it, so that Bot's held
+  // text goes out first; the rest of the turn is held afresh until turn/end.
+  const flushHeld = (botId) => {
+    for (const [sessionId, held] of bookends) {
+      if (held.botId !== botId) continue
+      bookends.delete(sessionId)
+      sendHeld(held)
+    }
+  }
   ctx.on('session/event', (session, event) => {
     const botId = rt.chatOwners.get(session.id)
     if (botId === undefined) {
@@ -1191,6 +1206,7 @@ export function install(rt) {
     if (event.type === 'turn/start') bookends.delete(session.id)
     for (const item of rt.displayItems(session.id, [event])) {
       if (item.kind === 'view') {
+        flushHeld(botId)
         mirror(botId, viewCardText({ title: item.title, view: item.view }) || (item.title ?? ''), () => true)
         continue
       }
@@ -1203,9 +1219,7 @@ export function install(rt) {
     if (event.type === 'turn/end') {
       const held = bookends.get(session.id)
       bookends.delete(session.id)
-      if (held !== undefined) {
-        for (const body of held.last === undefined ? [held.first] : [held.first, held.last]) mirror(held.botId, body, mode => mode === 'bookends')
-      }
+      if (held !== undefined) sendHeld(held)
     }
   })
 
@@ -1220,6 +1234,7 @@ export function install(rt) {
 
   rt.onApproval((kind, data) => {
     if (kind === 'open') {
+      if (data.roomId === undefined) flushHeld(data.botId)
       void (async () => {
         for (const conn of Object.values(connections())) {
           const runner = runners.get(conn.id)
