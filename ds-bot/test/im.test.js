@@ -389,6 +389,126 @@ test('notify cards: a card mid turn still sends no turn text', async (t) => {
   assert.ok(s.fake.sent.some(entry => entry.buttons !== undefined), 'the card is sent')
 })
 
+// Who opened a turn: only the user's own turns mirror their text to IM.
+const PEER = { kind: 'bot', form: 'relay', role: 'request', exchangeId: 'x1', senderName: 'Writer', senderSessionId: 'b' }
+const SCHEDULE = { kind: 'schedule' }
+const USER = { kind: 'user' }
+const opened = (s, turn, source) => {
+  s.emitEvent('a', 'turn/start', { turn })
+  s.emitEvent('a', 'user/message', { source, content: [{ type: 'text', text: 'opening message' }] })
+}
+const ended = (s, turn) => s.emitEvent('a', 'turn/end', { turn, reason: 'stop' })
+
+for (const notify of ['bookends', 'all']) {
+  for (const [who, source] of [['another Bot', PEER], ['a scheduled task', SCHEDULE]]) {
+    test(`notify ${notify}: a turn started by ${who} sends no text, however short`, async (t) => {
+      const { s } = await notifyChat(notify)
+      t.after(s.stop)
+      opened(s, 1, source)
+      say(s, 'Working on your request.', 'Middle.')
+      say(s, 'Done.')
+      ended(s, 1)
+      opened(s, 2, source)
+      say(s, 'One short paragraph back to the Bot.')
+      ended(s, 2)
+      await s.flush()
+      assert.deepEqual(texts(s), [])
+    })
+  }
+}
+
+test('notify bookends: a turn the user started still sends its first and last text', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  opened(s, 1, USER)
+  say(s, 'Starting on it.', 'Reading the files.')
+  say(s, 'Done: all green.')
+  ended(s, 1)
+  await s.flush()
+  assert.deepEqual(texts(s), ['Starting on it.', 'Done: all green.'])
+})
+
+for (const [notify, expected] of [['bookends', ['For the user.', 'Last for the user.']], ['all', ['For the user.', 'Middle.', 'Last for the user.']]]) {
+  test(`notify ${notify}: a peer turn that never ended stays silent and does not silence the user turn after it`, async (t) => {
+    const { s } = await notifyChat(notify)
+    t.after(s.stop)
+    opened(s, 1, PEER)
+    say(s, 'Peer work, never ended.')
+    opened(s, 2, USER)
+    say(s, 'For the user.', 'Middle.', 'Last for the user.')
+    ended(s, 2)
+    await s.flush()
+    assert.deepEqual(texts(s), expected)
+  })
+}
+
+test('notify bookends: a user turn does not carry into the peer turn after it, ended or not', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  opened(s, 1, USER)
+  say(s, 'For the user.')
+  ended(s, 1)
+  opened(s, 2, PEER)
+  say(s, 'Peer reply one.', 'Peer reply two.')
+  ended(s, 2)
+  opened(s, 3, USER)
+  say(s, 'User turn, never ended.')
+  opened(s, 4, SCHEDULE)
+  say(s, 'Scheduled reply.')
+  ended(s, 4)
+  await s.flush()
+  assert.deepEqual(texts(s), ['For the user.'])
+})
+
+test('notify bookends: the user joining a peer turn mirrors the text written after it', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  opened(s, 1, PEER)
+  say(s, 'Peer part.')
+  s.emitEvent('a', 'user/message', { source: USER, content: [{ type: 'text', text: 'the user steers in' }] })
+  say(s, 'Now for the user.', 'Last for the user.')
+  s.emitEvent('a', 'user/message', { source: PEER, content: [{ type: 'text', text: 'another peer note' }] })
+  say(s, 'Still the user turn.')
+  ended(s, 1)
+  await s.flush()
+  assert.deepEqual(texts(s), ['Now for the user.', 'Still the user turn.'])
+})
+
+test('notify bookends: a card in a peer turn still goes out, with no turn text', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  opened(s, 1, PEER)
+  say(s, 'Context for the card.')
+  await openCards.view(s)
+  await s.flush()
+  ended(s, 1)
+  await s.flush()
+  assert.ok(s.fake.sent.some(entry => entry.buttons !== undefined), 'the card is sent')
+  assert.deepEqual(texts(s), [])
+})
+
+test('notify bookends: a fresh part resumes a peer turn silently and a user turn with its text', async (t) => {
+  const { s } = await notifyChat('bookends')
+  t.after(s.stop)
+  // A resumed Bot relay carries its own source; a resumed user turn carries a bare handoff.
+  opened(s, 1, { ...PEER, handoff: true, resume: true, imOrigin: 'held-token' })
+  say(s, 'Resumed peer work.', 'Done.')
+  ended(s, 1)
+  opened(s, 2, { kind: 'bot', form: 'relay', role: 'handoff', senderName: 'DS Bot', exchangeId: 'h2', handoff: true, resume: true })
+  say(s, 'Resumed user work.', 'Middle.', 'Finished for the user.')
+  ended(s, 2)
+  // A failed switch goes on in the same part with a bare `resume` note.
+  opened(s, 3, { kind: 'bot', form: 'relay', role: 'resume', senderName: 'DS Bot', exchangeId: 'h3' })
+  say(s, 'Back on the user work.')
+  ended(s, 3)
+  // A restart's resume note cannot say who asked, so it stays silent.
+  opened(s, 4, { kind: 'bot', form: 'relay', role: 'resume', senderName: 'DS Bot', exchangeId: 'h4', resumed: true })
+  say(s, 'Picked up after a restart.')
+  ended(s, 4)
+  await s.flush()
+  assert.deepEqual(texts(s), ['Resumed user work.', 'Finished for the user.', 'Back on the user work.'])
+})
+
 test('IM user messages are tagged by seq for the current part; a part that is no longer current drops out', async (t) => {
   const s = await start()
   t.after(s.stop)

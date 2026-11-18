@@ -1592,7 +1592,30 @@ export function install(rt) {
       sendHeld(held)
     }
   }
+  // Per Session, who the running turn is for: 'user' once the user's own message is in
+  // it, 'peer' when it was started by another Bot or a scheduled task. Only the user's
+  // turns mirror their text, whatever its length; cards still go out. Cleared at both
+  // turn edges, so a peer turn that never ended cannot silence the user's next one.
+  const turnFor = new Map()
+  const fromUser = source => source?.kind === 'user' || source?.kind === REPLY_KIND
+    || (typeof source?.rpcId === 'string' && source.rpcId.startsWith('im:'))
+  // A part switch that goes on with a stopped turn carries the Bot relay that started
+  // it (parts.js handoffSource and its failed-switch note); a bare `handoff` resume or
+  // `resume` note means no Bot did, so it decides nothing. A restart's `resume` note
+  // (`resumed`) cannot tell, and counts as a peer's.
+  const continues = source => (source.role === 'handoff' && source.resume === true)
+    || (source.role === 'resume' && source.resumed !== true)
+  const fromPeer = source => source?.kind === 'schedule'
+    || (source?.kind === SOURCE_KIND && !continues(source))
   ctx.on('session/event', (session, event) => {
+    if (event.type === 'turn/start') turnFor.delete(session.id)
+    if (event.type === 'user/message') {
+      const source = event.data?.source
+      if (fromUser(source)) turnFor.set(session.id, 'user')
+      else if (fromPeer(source) && !turnFor.has(session.id)) turnFor.set(session.id, 'peer')
+    }
+    const peerTurn = turnFor.get(session.id) === 'peer'
+    if (event.type === 'turn/end') turnFor.delete(session.id)
     if (event.type === 'turn/start') {
       const room = rt.roomOf(session.id)
       if (room === undefined) {
@@ -1662,7 +1685,7 @@ export function install(rt) {
         mirror(botId, viewCardText({ title: item.title, view: item.view }) || (item.title ?? ''), () => true)
         continue
       }
-      if (item.kind !== 'bot') continue
+      if (item.kind !== 'bot' || peerTurn) continue
       mirror(botId, item.text, mode => mode === 'all')
       const held = bookends.get(session.id)
       if (held === undefined) bookends.set(session.id, { botId, first: item.text })
