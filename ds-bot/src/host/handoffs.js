@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import { LATE_ANSWER, TEXT_KEPT } from './constants.js'
 import { headOf } from './text.js'
-import { isOpenPart, ownChatSessions } from './threads.js'
+import { ownChatSessions, threadCurrentOfPart } from './threads.js'
 
 const minutes = since => {
   const count = Math.floor((Date.now() - since) / 60_000)
@@ -32,6 +32,12 @@ const WAIT_CEILING_MS = 24 * 60 * 60 * 1000
 export function install(rt) {
   const { ctx, state } = rt
   const works = () => (state.works ??= {})
+  // [2026-11-22 local] closeWork() takes a reply out of `open` on arrival, but 0.3.10's
+  // failure dedup (turns.js parentCoveredBy) asks whether the reply is still unread.
+  // `workId\0id` of every reply recorded and not yet taken. Memory only: after a
+  // restart it is empty, so the worst case is one duplicate notice, never a stuck work.
+  const unreadReplies = new Set()
+  const replyUnread = (workId, id) => unreadReplies.has(`${workId}\0${id}`)
   // What came back, whole; state.json keeps the start of each.
   const whole = new Map()
   const save = () => void rt.save().catch(() => {})
@@ -141,6 +147,7 @@ export function install(rt) {
     if (above !== undefined) {
       // The work reads closed the moment the reply is recorded, not when the Bot that
       // asked gets round to reading it. The result below is what carries the answer up.
+      if ((above.open ?? []).includes(id)) unreadReplies.add(`${work.parent}\0${id}`)
       above.open = (above.open ?? []).filter(other => other !== id)
       // The whole result goes into a file of its own before the team file names it.
       const file = keepResult(id, text)
@@ -216,6 +223,7 @@ export function install(rt) {
     if (work === undefined) return
     const { parent } = work
     delete works()[id]
+    for (const child of Object.values(works())) if (child.parent === id) delete child.parent
     const above = works()[parent]
     if (above !== undefined) above.open = above.open.filter(other => other !== id)
     for (const result of work.results ?? []) whole.delete(result.id)
@@ -225,6 +233,7 @@ export function install(rt) {
   }
 
   function taken(workId, id) {
+    unreadReplies.delete(`${workId}\0${id}`)
     const work = works()[workId]
     if (work === undefined || !work.open.includes(id)) return
     work.open = work.open.filter(other => other !== id)
@@ -433,9 +442,10 @@ export function install(rt) {
       const said = reason === 'gone'
         ? target + ' is no longer on the team, so the work you handed it has no answer. The user gave up waiting for it; this is its result. Go on with the work you were given.'
         : 'No reply came back from ' + target + ', and the user gave up waiting for it. This is its result: go on with the work you were given.'
+      const targetSession = work.fromPart === undefined ? undefined : threadCurrentOfPart(rt.botOf(waitingBot), work.fromPart)
       void rt.deliver({
         fromId: work.to !== undefined && rt.botOf(work.to) !== undefined ? work.to : undefined,
-        fromName: name, toId: waitingBot, text: said, role: 'reply', replyTo: id,
+        fromName: name, toId: waitingBot, ...(targetSession ? { sessionId: targetSession } : {}), text: said, role: 'reply', replyTo: id,
         exchangeId: randomUUID(), work: work.parent, abandoned: true, recordExchange: false,
       }).catch(error => rt.warn('ds-bot: giving up the wait for %s was not delivered: %s', waitingBot, error))
     }
@@ -486,8 +496,9 @@ export function install(rt) {
     const place = sessionId => {
       const room = rt.roomOf(rt.groupOwners.get(sessionId)?.roomId)
       if (room) return `in group "${room.name}"`
-      // The same words the message_bot note uses for a background part.
-      return isOpenPart(bot, sessionId) ? 'in another of its conversations' : 'in its own chat'
+      const task = rt.taskBySession?.(sessionId)?.task
+      if (task !== undefined) return `in background task "${task.title}"`
+      return 'in its own chat'
     }
     const forWhom = (sessionId, info) => {
       if (rt.groupOwners.has(sessionId)) return info?.askedBy && nameOf(info.askedBy) ? `, for ${nameOf(info.askedBy)}` : ''
@@ -535,5 +546,5 @@ export function install(rt) {
     return lines.join('; ')
   }
 
-  Object.assign(rt, { workOf, workOrigin, openWork, closeWork, dropWork, takenWork: taken, lateWork, answerMissed, ownsWork: owns, waitsWork: waits, holdWork: hold, workAsker: askedBy, answerText, upstreamOf, sameWork, forgetBotWork: forgetBot, statusOf, waitingView, settleSubWork, subWorkRun, nameSubWork, abandonWork, abandonedWork: takeAbandoned })
+  Object.assign(rt, { workOf, workOrigin, openWork, closeWork, dropWork, takenWork: taken, replyUnread, lateWork, answerMissed, ownsWork: owns, waitsWork: waits, holdWork: hold, workAsker: askedBy, answerText, upstreamOf, sameWork, forgetBotWork: forgetBot, statusOf, waitingView, settleSubWork, subWorkRun, nameSubWork, abandonWork, abandonedWork: takeAbandoned })
 }

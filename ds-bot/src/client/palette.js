@@ -23,7 +23,7 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
     setTimeout(() => actions.closePalette(token), PALETTE_EXIT_MS)
   }
   useEscape(close)
-  const ids = [...roster.bots.map(currentPart), ...roster.rooms.map(item => item.id)]
+  const ids = [...roster.bots.map(currentPart), ...roster.rooms.map(currentPart)]
   const found = useSessions((list) => {
     if (wanted.length < 2) return '[]'
     const hits = []
@@ -81,7 +81,7 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
     { key: 'cmd:new', icon: h(PlusIcon), title: t('New chat'), run: () => actions.openNewChat('new') },
     { key: 'cmd:bot', icon: h(PlusIcon), title: t('Create Bot'), run: () => actions.openNewChat('create') },
     { key: 'cmd:group', icon: h(PeopleIcon), title: t('Create group chat'), run: () => actions.openNewChat('group') },
-    { key: 'cmd:settings', icon: h(GearIcon), title: t('Settings'), run: () => actions.openSettings('general') },
+    { key: 'cmd:settings', icon: h(GearIcon), title: t('Settings'), run: () => actions.openSettings('overview') },
   ].filter(command => matchesName(command.title))
   if (commands.length) sections.push([t('Commands'), commands])
   const rows = sections.flatMap(([, items]) => items)

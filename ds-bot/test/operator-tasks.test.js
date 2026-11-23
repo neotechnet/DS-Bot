@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
-import { build } from 'esbuild'
+import { buildSync } from 'esbuild'
 import { install, openDecisions } from '../src/host/operator-tasks.js'
 import { install as installTurns } from '../src/host/turns.js'
 import { install as installHandoffs } from '../src/host/handoffs.js'
@@ -294,7 +294,8 @@ test('the state answer carries operator tasks live, and a closed decision leaves
 // The details panel and the header badge the user sees: the three sections in order,
 // and the "A · U" pair with the operator count in the accent colour and the waiting
 // count in the danger colour. The client module is browser code, so it is bundled here.
-const operatorTasksBundle = await build({
+// [2026-11-22 local] buildSync: 0.3.10's test-files-layout rule forbids a top-level await after the first test.
+const operatorTasksBundle = buildSync({
   entryPoints: [fileURLToPath(new URL('../src/client/operator-tasks.js', import.meta.url))],
   bundle: true, format: 'cjs', platform: 'node', write: false,
   external: ['react'],
