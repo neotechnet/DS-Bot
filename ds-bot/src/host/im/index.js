@@ -1657,9 +1657,22 @@ export function install(rt) {
     }
   }
 
-  const busyOf = (target) => {
-    if (target?.botId !== undefined) return rt.live.get(rt.chatOf(target.botId))?.turn !== undefined
-    if (target?.roomId !== undefined) return (rt.roomWorkView?.()[target.roomId] ?? []).length > 0
+  // [2026-11-24 local] Typing shows only in the chat the running work came from, the
+  // same rule as replies: an Overlord busy on Bot or scheduled work showed "typing..."
+  // to Steve in Telegram for turns he never started.
+  const askedFrom = (sessionId, connId, chatKey) => {
+    const origin = originOf(sessionId)
+    return origin !== undefined && origin.conn.id === connId && origin.chatKey === chatKey
+  }
+  const busyOf = (target, connId, chatKey) => {
+    if (target?.botId !== undefined) {
+      const sessionId = rt.chatOf(target.botId)
+      return rt.live.get(sessionId)?.turn !== undefined && askedFrom(sessionId, connId, chatKey)
+    }
+    if (target?.roomId !== undefined) {
+      return (rt.roomWorkView?.()[target.roomId] ?? []).length > 0
+        && askedFrom(rt.roomOf(target.roomId)?.sessionId ?? target.roomId, connId, chatKey)
+    }
     return false
   }
 
@@ -1700,7 +1713,7 @@ export function install(rt) {
       if (typeof runner.handle?.typing === 'function') {
         runner.typing = setInterval(() => {
           for (const { chatKey, chat, target } of targetsOf(fresh(conn.id) ?? conn)) {
-            if (target !== undefined && busyOf(target)) void runner.handle.typing({ key: chat.key ?? chatKey, kind: chat.kind, title: chat.title }).catch?.(() => {})
+            if (target !== undefined && busyOf(target, conn.id, chatKey)) void runner.handle.typing({ key: chat.key ?? chatKey, kind: chat.kind, title: chat.title }).catch?.(() => {})
           }
         }, TYPING_MS)
         runner.typing.unref?.()
