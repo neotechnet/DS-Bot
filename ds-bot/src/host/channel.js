@@ -11,6 +11,7 @@ import { BACKGROUND_AFTER_MAX_SEC, COLORS, EXTRA_COLORS, ROUTE } from './constan
 
 const STAGED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const STAGED_MS = 30 * 60_000
+const WEB_ANSWER = Object.freeze({ via: 'web' })
 
 const LANGUAGES = {
   zh: 'Chinese (简体中文)',
@@ -676,12 +677,12 @@ export function install(rt) {
         case 'answer-question': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
           await rt.load()
-          return ok(await rt.answerQuestion(body.sessionId, body.questionId, body.answer))
+          return ok(await rt.answerQuestion(body.sessionId, body.questionId, body.answer, undefined, WEB_ANSWER))
         }
         case 'view-reply': {
           if (typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
           await rt.load()
-          return ok(await rt.answerView(body.sessionId, body.viewId, body.action, body.values))
+          return ok(await rt.answerView(body.sessionId, body.viewId, body.action, body.values, undefined, WEB_ANSWER))
         }
         // A photo for the next `send`, one per call: a phone's link carries a few MB per
         // message, so photos travel one by one and the message names them.
@@ -941,13 +942,30 @@ export function install(rt) {
     }, AbortSignal.timeout(30_000))
   }
 
+  // [2026-11-24 local] Who answered a card, in the message source and in answers[0]
+  // of the reply JSON: the approval gate reads transcripts, and must tell a paired
+  // delegate from the operator. The app and web share one DSH identity, so a tap
+  // there is only { via: 'web' }.
+  function stampAnsweredBy(reply, answeredBy) {
+    if (reply === undefined || answeredBy === undefined) return reply
+    let data
+    try { data = JSON.parse(reply.text) } catch { data = undefined }
+    const first = Array.isArray(data?.answers) ? data.answers[0] : undefined
+    if (first !== null && typeof first === 'object' && !Array.isArray(first)) {
+      data.answers[0] = { ...first, answeredBy }
+      reply.text = JSON.stringify(data)
+    }
+    reply.source = { ...reply.source, answeredBy }
+    return reply
+  }
+
   // The user's answer to an ask_user card, from the web or an IM chat. A Bot id or an
   // earlier part of its own chat means the current one.
-  async function answerQuestion(sessionRef, questionId, answer, requestId) {
+  async function answerQuestion(sessionRef, questionId, answer, requestId, answeredBy) {
     const sessionId = ownThreadTarget(sessionRef) ?? sessionRef
     const question = rt.own(state.questions, sessionId)
     if (question === undefined || question.id !== questionId) throw Object.assign(new Error('This question is no longer open'), { code: 'bot/stale' })
-    const reply = questionReply(question, answer)
+    const reply = stampAnsweredBy(questionReply(question, answer), answeredBy)
     if (reply === undefined) throw Object.assign(new Error('Nothing to send'), { code: 'bot/invalid' })
     // Claim the question before queueing so a second answer is refused.
     delete state.questions[sessionId]
@@ -965,13 +983,13 @@ export function install(rt) {
   }
 
   // The user's answer to a show_view card, from the web, the phone or an IM chat.
-  async function answerView(sessionRef, viewId, action, values, requestId) {
+  async function answerView(sessionRef, viewId, action, values, requestId, answeredBy) {
     const sessionId = ownThreadTarget(sessionRef) ?? sessionRef
     const pending = rt.own(state.views, sessionId)
     if (pending === undefined || pending.id !== viewId) throw Object.assign(new Error('This view is no longer open'), { code: 'bot/stale' })
     const checked = validateViewAnswer(pending.view, action, values)
     if (checked.error !== undefined) throw Object.assign(new Error(checked.error), { code: 'bot/invalid' })
-    const reply = viewReply(pending, action, values)
+    const reply = stampAnsweredBy(viewReply(pending, action, values), answeredBy)
     if (reply === undefined) throw Object.assign(new Error('Nothing to send'), { code: 'bot/invalid' })
     // Claim the view before queueing so a second answer is refused.
     delete state.views[sessionId]

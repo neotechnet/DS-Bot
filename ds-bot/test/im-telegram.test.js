@@ -208,9 +208,13 @@ test('a multiline Telegram group mention answers a token form without losing fie
   await until(() => followups.length === 1)
   assert.equal(rt.state.views.a, undefined)
   assert.equal(prompts.length, 1, 'the answer is consumed rather than relayed as ordinary chat')
-  assert.deepEqual(JSON.parse(followups[0].content[0].text).answers[0], {
+  const { answeredBy, ...given } = JSON.parse(followups[0].content[0].text).answers[0]
+  assert.deepEqual(given, {
     id: viewId, action: 'details', values: { fields: { name: 'Alice  Smith\tJr', notes: 'first  line\n  second\tline @fakebot\nlast\t ' } },
   })
+  // The real Telegram adapter's numeric sender id reaches the answer record.
+  assert.deepEqual({ ...answeredBy, connId: 'x' }, { via: 'telegram', connId: 'x', senderId: '9', senderName: 'Ann' })
+  assert.deepEqual(followups[0].source.answeredBy, answeredBy)
   await rt.teamTools.find(tool => tool.name === 'ask_user').execute({
     question: 'Which letters?', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }], multiSelect: true,
   }, { agent, concludeTurn() {} })

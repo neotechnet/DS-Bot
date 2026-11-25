@@ -1195,6 +1195,13 @@ const askQuestion = async (s) => {
 }
 const press = (s, data) => s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data, messageId: 1 })
 const answerOf = message => JSON.parse(message.content[0].text).answers[0]
+// Who answered, read from both places the approval gate may look, which must agree.
+const answeredByOf = (message) => {
+  const inText = answerOf(message).answeredBy
+  assert.deepEqual(message.source.answeredBy, inText, 'the source and the answer JSON name the same person')
+  return inText
+}
+const withoutAnsweredBy = ({ answeredBy, ...rest }) => rest
 const followups = (s) => {
   const got = []
   s.agentOf('a').followup = (message) => { got.push(message) }
@@ -1240,7 +1247,9 @@ test('the typed-answer button arms a reply prompt and the next text answers that
   await dm(s, 'u1', 'Ship to Acme only, then wait a day')
   assert.equal(s.rt.state.questions.a, undefined, 'the typed text answers the card')
   assert.equal(got.length, 1, 'the same Bot gets the answer')
-  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: [], custom: 'Ship to Acme only, then wait a day' })
+  assert.deepEqual(withoutAnsweredBy(answerOf(got[0])), { id: 'q1', selected: [], custom: 'Ship to Acme only, then wait a day' })
+  assert.deepEqual({ ...answeredByOf(got[0]), connId: 'x' }, { via: 'telegram', connId: 'x', senderId: 'u1', senderName: 'U1' })
+  assert.match(got[0].source.rpcId, /^im:telegram:/, 'a typed answer now carries a request id like a tapped one')
   assert.equal(s.prompts.length, 0, 'the text is not also sent as an ordinary message')
   await s.flush()
   assert.equal(s.fake.edited.length, 1, 'the card is edited shut')
@@ -1265,7 +1274,8 @@ test('in a group the typed-answer prompt keeps the reply box, and the reply answ
   assert.equal(prompt.chat.key, 'g1')
   assert.equal(prompt.forceReply, true, 'a group needs the reply box, or the unaddressed answer is dropped')
   await gm(s, 'u1', 'Ship to Acme only')
-  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: [], custom: 'Ship to Acme only' })
+  assert.deepEqual(withoutAnsweredBy(answerOf(got[0])), { id: 'q1', selected: [], custom: 'Ship to Acme only' })
+  assert.equal(answeredByOf(got[0]).senderId, 'u1')
 })
 
 test('ordinary chat text with no armed card is untouched', async (t) => {
@@ -1306,7 +1316,45 @@ test('a plain number still answers the card on Telegram', async (t) => {
   const got = followups(s)
   await dm(s, 'u1', '2')
   assert.equal(s.rt.state.questions.a, undefined)
-  assert.deepEqual(answerOf(got[0]), { id: 'q1', selected: ['One customer first'] })
+  assert.deepEqual(withoutAnsweredBy(answerOf(got[0])), { id: 'q1', selected: ['One customer first'] })
+  assert.deepEqual({ ...answeredByOf(got[0]), connId: 'x' }, { via: 'telegram', connId: 'x', senderId: 'u1', senderName: 'U1' })
+})
+
+test('a tapped card answer records the paired person by stable id, with the name saved at pairing', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  const conn = await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  // The live Telegram name changed after pairing: the record keeps the id and the
+  // pairing name, never the name the platform sends now.
+  await s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'Renamed Later' }, data: 'q:q1:0', messageId: 1 })
+  assert.equal(got.length, 1)
+  assert.deepEqual(withoutAnsweredBy(answerOf(got[0])), { id: 'q1', selected: ['deploy to production'] })
+  assert.deepEqual(answeredByOf(got[0]), { via: 'telegram', connId: conn.id, senderId: 'u1', senderName: 'U1' })
+})
+
+test('a view card answered from Telegram records who pressed it', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  const conn = await pairedChat(s)
+  await showView(s)
+  const got = followups(s)
+  await s.fake.handlers.onAction({ chat: { key: 'dm-u1', kind: 'direct', title: 'U1' }, sender: { id: 'u1', name: 'U1' }, data: 'v:v1:0', messageId: 1 })
+  assert.equal(got.length, 1)
+  assert.deepEqual(answeredByOf(got[0]), { via: 'telegram', connId: conn.id, senderId: 'u1', senderName: 'U1' })
+})
+
+test('a card answered on the computer names no person', async (t) => {
+  const s = await start()
+  t.after(s.stop)
+  await pairedChat(s)
+  await askQuestion(s)
+  const got = followups(s)
+  await s.rt.answerQuestion('a', 'q1', { selected: ['Hold'] })
+  assert.equal(got.length, 1)
+  assert.equal(answerOf(got[0]).answeredBy, undefined, 'a direct runtime call states no identity')
+  assert.equal(got[0].source.answeredBy, undefined)
 })
 
 test('a second arm replaces the first, and a typed view answer reaches the Bot', async (t) => {
