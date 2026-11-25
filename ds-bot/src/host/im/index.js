@@ -765,6 +765,14 @@ export function install(rt) {
     // rebound while the message waits in the queue still answers the target that asked.
     requests.set(requestId, { connId: conn.id, chatKey, senderId, binding: bindingOf(conn, chatKey), at: Date.now(), ...(roomCardOrigin === undefined ? {} : { roomCardOrigin }) })
   }
+  // [2026-11-24 local] Who answered a card, for the approval gate to tell a paired
+  // delegate from the operator. senderId is the platform's stable id and is the key;
+  // the name is the one saved at pairing, a label only.
+  const answeredByOf = (conn, senderId) => {
+    const id = String(senderId ?? '')
+    const entry = (conn.paired ?? []).find(item => item.id === id)
+    return { via: conn.platform, connId: conn.id, senderId: id, ...(typeof entry?.name === 'string' && entry.name !== '' ? { senderName: entry.name } : {}) }
+  }
   const restoreCardRoomOrigin = (sessionId, saved) => {
     const owner = rt.groupOwners.get(sessionId)
     if (owner === undefined || saved === undefined) return
@@ -1110,7 +1118,7 @@ export function install(rt) {
     const requestId = `im:${conn.platform}:${randomUUID()}`
     rememberRequest(requestId, conn, chat.key, senderId, found.view.imOrigin)
     try {
-      await rt.answerView(found.sessionId, found.view.id, choice.action, choice.values, requestId)
+      await rt.answerView(found.sessionId, found.view.id, choice.action, choice.values, requestId, answeredByOf(conn, senderId))
       await settleCard(conn.id, cardKey, choice.label)
       await settledEdits(conn)
     } catch (error) {
@@ -1190,7 +1198,7 @@ export function install(rt) {
     const requestId = `im:${conn.platform}:${randomUUID()}`
     rememberRequest(requestId, conn, chat.key, senderId, found.question.imOrigin)
     try {
-      await rt.answerQuestion(found.sessionId, found.question.id, { selected: valid }, requestId)
+      await rt.answerQuestion(found.sessionId, found.question.id, { selected: valid }, requestId, answeredByOf(conn, senderId))
       await settleCard(conn.id, held.cardKey, valid.join(', '))
       await settledEdits(conn)
     } catch (error) {
@@ -1245,18 +1253,24 @@ export function install(rt) {
   }
   // The typed answer for the card this chat armed. False when that card is no
   // longer open, so the text goes on as an ordinary message.
-  const answerTyped = async (conn, chat, cardKey, body) => {
+  const answerTyped = async (conn, chat, cardKey, body, senderId) => {
     if (!cardOpen(conn, chat.key, cardKey)) return false
+    let requestId
     try {
       if (cardKey.startsWith('q:')) {
         const found = questionById(cardKey.slice(2))
-        await rt.answerQuestion(found.sessionId, found.question.id, { selected: [], custom: body })
+        // [2026-11-24 local] A typed answer is a card answer like a tapped one: it
+        // claims this chat for the reply and records who typed it.
+        requestId = `im:${conn.platform}:${randomUUID()}`
+        rememberRequest(requestId, conn, chat.key, senderId, found.question.imOrigin)
+        await rt.answerQuestion(found.sessionId, found.question.id, { selected: [], custom: body }, requestId, answeredByOf(conn, senderId))
       } else {
         // A view has no free-text answer; the user's own message closes it as replied.
         const found = viewById(cardKey.slice(2))
         await rt.sendUser({ sessionId: found.sessionId, content: [{ type: 'text', text: body }], requestId: `im:${conn.platform}:${randomUUID()}` })
       }
     } catch (error) {
+      if (requestId !== undefined) requests.delete(requestId)
       if (error?.code === 'bot/stale') return false
       throw error
     }
@@ -1321,7 +1335,7 @@ export function install(rt) {
     const armedCard = armed.get(armKey(conn, msg.chat.key))
     if (armedCard !== undefined && body !== '') {
       armed.delete(armKey(conn, msg.chat.key))
-      if (await answerTyped(conn, msg.chat, armedCard, body)) return
+      if (await answerTyped(conn, msg.chat, armedCard, body, msg.sender.id)) return
     }
     if (NUMBERS.test(body)) {
       const picked = body.trim().split(/\s+/).map(Number)

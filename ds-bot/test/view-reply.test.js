@@ -447,7 +447,8 @@ test('view-reply claims the card, refuses a stale or invalid answer, and restore
   const payload = JSON.parse(message.content[0].text)
   assert.equal(payload.kind, 'answer_to_pending_view')
   assert.equal(payload.tool, 'show_view')
-  assert.deepEqual(payload.answers, [{ id: pending.id, action: 'pick', values: { selected: ['B'] } }])
+  assert.deepEqual(payload.answers, [{ id: pending.id, action: 'pick', values: { selected: ['B'] }, answeredBy: { via: 'web' } }])
+  assert.deepEqual(message.source.answeredBy, { via: 'web' }, 'a tap in the app carries only where it came from')
   assert.equal(payload.views[0].title, 'Pick')
   assert.deepEqual(payload.views[0].view, CHOICES)
 
