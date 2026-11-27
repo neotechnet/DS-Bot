@@ -708,6 +708,11 @@ export function install(rt) {
     const session = ctx.get('agents')?.get(sessionId)?.session
     if (isLocalCliBot(bot, session)) return false
     if (handoffing.get(bot.id)?.oldSid === sessionId) return true
+    // [2026-11-23 local] Never move a busy foreground into bot.tasks[] on an incoming
+    // message: each move forks the whole Session inside the host and froze every Bot's
+    // hooks for 1-3 min (C:/Projects/logs/2026-11-23/dsbot-slow-hooks/FINDINGS.md).
+    // Callers fall back to the 0.3.8 steer cut. Explicit task_start is unaffected.
+    if (bot !== undefined) return false
     const entry = rt.live.get(sessionId)
     if (entry?.turn === undefined || entry.cut !== undefined) return false
     if ((entry.toolCount ?? 0) > 0 || (entry.calls?.size ?? 0) > 0) return true
