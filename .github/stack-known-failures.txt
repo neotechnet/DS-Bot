@@ -21,6 +21,7 @@ test/context-pr2-local-agents.test.js :: D2: ACP, Codex, and Claude resume loss 
 test/context-pr3-runtime.test.js :: L2: Codex and Claude receive instructions via their native channel without duplicating them in replay prompt, while ACP keeps prompt instructions
 test/context-pr4-pack.test.js :: D8 regressions: Claude rejected --fork-session retries once on fresh session with fallbackContext (never resuming parent); openTaskPart probes fork on demand and preserves parent inheritedSegments
 test/context-pr4-pack.test.js :: D8: versionSupportsFork, Codex thread/fork RPC + unsupported cache, and Claude --fork-session deferred fork
+test/context-switch-pruner.test.js :: P1-4: real DSH ToolResultPruner reclaims oversized tool outputs past check line with zero LLM calls and intact dialogue
 test/external-approval-cwd.test.js :: a direct MCP approval call has no trusted runtime permission evidence
 test/external-approval-cwd.test.js :: a pending driver callback supplies trusted evidence without accepting tool arguments
 test/external-approval-cwd.test.js :: identical Claude relative commands in different spawn directories produce distinct review evidence
