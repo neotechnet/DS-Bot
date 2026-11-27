@@ -1,0 +1,137 @@
+name: Stack check
+
+# The one required check for pull requests into the stack/* branches of this fork. A stack branch
+# carries local behaviour that some upstream tests reject on purpose, so the upstream Test
+# workflow is red there for reasons no stack pull request can fix. This check runs the same unit
+# tests and lint, and fails only on a failure that is not listed in .github/stack-known-failures.txt,
+# or when a listed failure now passes (the list may only shrink). It lives outside ds-bot/ so it
+# never reaches the installed plugin.
+
+on:
+  pull_request:
+    branches: ['stack/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack-check:
+    name: Stack check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: ds-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            ds-bot/package-lock.json
+            link/package-lock.json
+      - run: npm ci --no-fund --no-audit
+      - name: Install the phone link's packages
+        run: npm ci --no-fund --no-audit --prefix ../link
+      - name: Restore DSH test harness
+        id: harness-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ds-bot/dev/harness/node_modules
+          key: dsh-harness-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('ds-bot/dev/harness/package.json', 'ds-bot/dev/harness/package-lock.json') }}
+      - name: Install DSH test harness
+        if: steps.harness-cache.outputs.cache-hit != 'true'
+        run: npm run harness
+      - name: Run unit tests (results to junit)
+        run: |
+          set +e
+          node --import ./test/harness-resolve.mjs --test --test-timeout=120000 --test-force-exit \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/junit.xml" \
+            "test/*.test.js"
+          echo "unit tests exit $?"
+          exit 0
+      - name: Run lint (results to json)
+        run: |
+          set +e
+          npm run lint --silent -- --format json > "$RUNNER_TEMP/lint.json"
+          echo "lint exit $?"
+          exit 0
+      - name: Compare with the known failures
+        env:
+          JUNIT: ${{ runner.temp }}/junit.xml
+          LINT: ${{ runner.temp }}/lint.json
+          BASELINE: ${{ github.workspace }}/.github/stack-known-failures.txt
+          OUT: ${{ runner.temp }}/stack-failures.txt
+        run: |
+          node - <<'EOF'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { JUNIT, LINT, BASELINE, OUT } = process.env
+          const fail = msg => { console.log(`::error::${msg}`); process.exitCode = 1 }
+          const decode = s => s.replace(/&(#x[0-9a-f]+|#\d+|quot|amp|lt|gt|apos);/gi, (_, e) => {
+            if (e[0] === '#') return String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10))
+            return { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'" }[e.toLowerCase()]
+          })
+          const attr = (s, n) => { const m = new RegExp(`\\b${n}="([^"]*)"`).exec(s); return m ? decode(m[1]) : '' }
+
+          if (!fs.existsSync(JUNIT)) { fail('no junit results were written: the unit tests did not run'); process.exit() }
+          const xml = fs.readFileSync(JUNIT, 'utf8')
+          const failed = new Set()
+          const suites = []
+          let current = null
+          let total = 0
+          const tag = /<(\/?)(testsuite|testcase|failure)\b([^>]*?)(\/?)>/g
+          for (let m; (m = tag.exec(xml));) {
+            const [, close, name, attrs, self] = m
+            if (name === 'testsuite') {
+              if (close) suites.pop()
+              else if (!self) suites.push(attr(attrs, 'name'))
+            } else if (name === 'testcase') {
+              if (close) { current = null; continue }
+              total += 1
+              const file = attr(attrs, 'file')
+              const key = `test/${file ? path.basename(file.replace(/\\/g, '/')) : '?'} :: ${[...suites, attr(attrs, 'name')].join(' > ')}`
+              if (self) current = null
+              else current = key
+            } else if (name === 'failure' && !close && current) {
+              failed.add(current)
+            }
+          }
+          if (total === 0) { fail('the junit results hold no tests: the unit tests did not run'); process.exit() }
+
+          if (!fs.existsSync(LINT)) { fail('no lint results were written: lint did not run'); process.exit() }
+          let lint
+          try { lint = JSON.parse(fs.readFileSync(LINT, 'utf8')) } catch (e) { fail(`lint results are not JSON: ${e.message}`); process.exit() }
+          if (!Array.isArray(lint.diagnostics)) { fail('lint results hold no diagnostics list: lint did not run'); process.exit() }
+          for (const d of lint.diagnostics) {
+            if (d.severity === 'error') failed.add(`lint :: ${d.filename} :: ${d.code} :: ${d.message}`)
+          }
+
+          const known = new Set(fs.readFileSync(BASELINE, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')))
+          fs.writeFileSync(OUT, [...failed].sort().join('\n') + '\n')
+          const added = [...failed].filter(k => !known.has(k)).sort()
+          const fixed = [...known].filter(k => !failed.has(k)).sort()
+          console.log(`tests run: ${total}; failing: ${failed.size}; known: ${known.size}; new: ${added.length}; no longer failing: ${fixed.length}`)
+          for (const k of added) fail(`new failure, not in the known list: ${k}`)
+          for (const k of fixed) fail(`listed as a known failure but it passes now; remove it from the list: ${k}`)
+          if (!added.length && !fixed.length) console.log('Stack check passed: every failure is a known one.')
+          EOF
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-check-results
+          path: |
+            ${{ runner.temp }}/junit.xml
+            ${{ runner.temp }}/lint.json
+            ${{ runner.temp }}/stack-failures.txt
+          if-no-files-found: warn
+          retention-days: 14
