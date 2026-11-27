@@ -1,0 +1,6 @@
+# Known failures on the stack/* branches, read by .github/workflows/stack-check.yml.
+# Each line is one unit test ("test/<file> :: <suite > test name>") or one lint error
+# ("lint :: <file> :: <rule> :: <message>") that fails on purpose because the stack keeps
+# local behaviour upstream rejects. The Stack check fails on any failure not listed here, and
+# on any listed line that now passes, so this list can only shrink.
+lint :: src/host/im/index.js :: eslint(no-unused-vars) :: Variable 'approvalOrigin' is declared but never used.
