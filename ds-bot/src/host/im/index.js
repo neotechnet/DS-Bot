@@ -1560,36 +1560,25 @@ export function install(rt) {
     const releaseInboundSeen = () => {
       if (inboundKey !== '') seenInboundIds.delete(inboundKey)
     }
-    const checkPriorImAdmission = async ({ allowTargetOnlyFallback = false } = {}) => {
+    // [2026-11-27 local] The duplicate check reads from disk only this chat's current target and its
+    // recorded former bindings (`chat.pastTargets`, and `conn.pastBotIds` for direct chats), never
+    // every Bot's log: a slow or corrupt unrelated Bot jammed Telegram for every chat, because the
+    // adapter handles one update at a time. A corrupt former binding still fails closed.
+    const formerRefs = () => [
+      ...(Array.isArray(chat?.pastTargets) ? chat.pastTargets : []),
+      ...(msg.chat.kind === 'direct' && Array.isArray(conn.pastBotIds) ? conn.pastBotIds : []),
+    ]
+    const checkPriorImAdmission = async () => {
       if (inboundKey === '' || typeof rt.findAdmittedForSend !== 'function') return false
       const priorRequestId = `im:${conn.platform}:${inboundKey}`
       const targetRef = target?.botId ?? target?.roomId
-      let admitted
-      try {
-        admitted = await rt.findAdmittedForSend({
-          ref: targetRef,
-          requestId: priorRequestId,
-          callerSupplied: true,
-        })
-      } catch (error) {
-        // When an unrelated Bot's cold archive is unreadable, check both this chat's current
-        // target AND any recorded former bindings (`chat.pastTargets` and connection-level
-        // `conn.pastBotIds` for direct chats) so a corrupt unrelated Bot never bricks cards
-        // here while a corrupt former explicit or implicit binding still fails closed.
-        if (!allowTargetOnlyFallback || targetRef === undefined) throw error
-        const relevantRefs = [
-          targetRef,
-          ...(Array.isArray(chat?.pastTargets) ? chat.pastTargets : []),
-          ...(msg.chat.kind === 'direct' && Array.isArray(conn.pastBotIds) ? conn.pastBotIds : []),
-        ]
-        admitted = await rt.findAdmittedForSend({
-          ref: targetRef,
-          refs: relevantRefs,
-          requestId: priorRequestId,
-          callerSupplied: true,
-          targetOnly: true,
-        })
-      }
+      const admitted = await rt.findAdmittedForSend({
+        ref: targetRef,
+        refs: [...(targetRef === undefined ? [] : [targetRef]), ...formerRefs()],
+        requestId: priorRequestId,
+        callerSupplied: true,
+        scanFleet: false,
+      })
       if (admitted?.admitted === true) {
         if (admitted.durable === true
           || (admitted.sessionId !== undefined && await rt.confirmSessionFlushed?.(admitted.sessionId, priorRequestId) === true)) {
@@ -1606,7 +1595,7 @@ export function install(rt) {
       // so let them reach `answerViewCode` directly without scanning unrelated cold histories.
       // Only guard ambiguous legacy `V<n>` view replies before `answerViewCode`.
       if (!isReservedCardCommand && /^V[1-9]\d*(?=\s|$)/i.test(trimmedStart)) {
-        if (await checkPriorImAdmission({ allowTargetOnlyFallback: true })) return
+        if (await checkPriorImAdmission()) return
       }
       if (await answerViewCode(conn, msg.chat, trimmedStart, msg.sender.id)) {
         await persistInboundSeen()
@@ -1682,7 +1671,7 @@ export function install(rt) {
         // Before letting a bare numeric message answer an open card, suppress redelivered
         // ordinary messages already admitted into DSH (even if `conn.seenInbound` was lost
         // across restart) so a redelivered "1" never answers a newly opened card (#2077).
-        if (held !== undefined && await checkPriorImAdmission({ allowTargetOnlyFallback: true })) return
+        if (held !== undefined && await checkPriorImAdmission()) return
         // Anything that does not clearly answer the newest open card — a stale
         // source, an out-of-range pick, several picks on a single choice — is a
         // normal message for the Bot, never swallowed and never 'stale'.
@@ -1758,12 +1747,12 @@ export function install(rt) {
         // Try once more with the same request id, then tell the chat to resend.
         let delivered
         try {
-          delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode })
+          delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode, admissionRefs: formerRefs() })
         } catch (first) {
           rt.warn('ds-bot: im message to %s not delivered, retrying once: %s', sessionId, first)
           await new Promise(resolve => setTimeout(resolve, rt.imSendRetryMs ?? IM_SEND_RETRY_MS))
           try {
-            delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode })
+            delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode, admissionRefs: formerRefs() })
           } catch (second) {
             await sendText(conn, msg.chat, text('notDelivered'))
             throw second
