@@ -1464,7 +1464,9 @@ export function install(rt) {
     return undefined
   }
 
-  async function sendUser({ sessionId: ref, content, files = [], requestId: providedRequestId, mode = 'queue' }) {
+  // [2026-11-27 local] `admissionRefs`: an IM chat's former Bots/rooms. The duplicate check reads
+  // only the target's own chain plus these from disk, never every Bot's log.
+  async function sendUser({ sessionId: ref, content, files = [], requestId: providedRequestId, mode = 'queue', admissionRefs }) {
     const callerSupplied = providedRequestId !== undefined
     const requestId = providedRequestId ?? randomUUID()
     const past = rt.pastOwners.get(ref)
@@ -1473,7 +1475,7 @@ export function install(rt) {
       ?? (room !== undefined ? rt.sessionOfRoom(room)
         : past !== undefined ? rt.sessionOfRoom(rt.roomOf(past.roomId)) : ref)
     const ownerBotId = rt.chatOwners.get(sessionId)
-    const admittedBefore = await rt.findAdmittedForSend?.({ ref, sessionId, requestId, callerSupplied })
+    const admittedBefore = await rt.findAdmittedForSend?.({ ref, refs: admissionRefs, sessionId, requestId, callerSupplied, scanFleet: false })
     if (admittedBefore?.admitted === true) {
       return { sessionId: admittedBefore.sessionId, alreadyAdmitted: true, durable: admittedBefore.durable === true }
     }
@@ -1493,7 +1495,7 @@ export function install(rt) {
         }
       }
     }
-    const admittedAfter = await rt.findAdmittedForSend?.({ ref, sessionId, requestId, callerSupplied })
+    const admittedAfter = await rt.findAdmittedForSend?.({ ref, refs: admissionRefs, sessionId, requestId, callerSupplied, scanFleet: false })
     if (admittedAfter?.admitted === true) {
       return { sessionId: admittedAfter.sessionId, alreadyAdmitted: true, durable: admittedAfter.durable === true }
     }

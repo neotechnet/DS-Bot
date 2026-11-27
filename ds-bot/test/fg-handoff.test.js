@@ -1679,6 +1679,8 @@ test('round-3 invariants: transfer ownership token, unreadable recipient defer, 
     sessionId: 'b',
     content: [{ type: 'text', text: 'Original IM msg' }],
     requestId: 'im:telegram:c1:dm-u1:msg-rebind-1',
+    // [2026-11-27 local] The IM handler passes the chat's former Bot (chat.pastTargets).
+    admissionRefs: ['a'],
   })
   assert.equal(env6.prompts.length, 0, 'redelivered IM message after restart + rebind must NOT prompt newly bound Bot B')
 })
@@ -1847,16 +1849,16 @@ test('round-4 invariants: concurrent Bot rollback isolation, superseded tombston
   const origGet5 = env5.ctx.get
   env5.ctx.get = name => (name === 'sessionQuery' ? query5 : origGet5(name))
 
-  await env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Queued IM' }], requestId: 'im:telegram:c1:dm-u1:q-1' })
+  await env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Queued IM' }], requestId: 'im:telegram:c1:dm-u1:q-1', admissionRefs: ['a'] })
   assert.equal(env5.prompts.length, 0, 'cold queued agent/inbox/spliced on Bot A must prevent duplicate prompt on newly bound Bot B')
 
   coldMode = 'removed'
-  await env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Removed IM' }], requestId: 'im:telegram:c1:dm-u1:q-2' })
+  await env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Removed IM' }], requestId: 'im:telegram:c1:dm-u1:q-2', admissionRefs: ['a'] })
   assert.equal(env5.prompts.length, 1, 'splice-removed message on Bot A must NOT falsely suppress delivery')
 
   coldMode = 'error'
   await assert.rejects(
-    () => env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Unreadable check' }], requestId: 'im:telegram:c1:dm-u1:q-3' }),
+    () => env5.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Unreadable check' }], requestId: 'im:telegram:c1:dm-u1:q-3', admissionRefs: ['a'] }),
     /disk I\/O failure/,
     'unreadable cold session must fail closed instead of treating error as a miss',
   )
@@ -1982,7 +1984,7 @@ test('round-5 invariants: room.segments object does not crash IM sendUser, recon
   await env1.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'Brand new IM msg' }], requestId: 'im:telegram:c1:dm-u1:fresh-1' })
   assert.equal(env1.prompts.length, 1)
   // And an IM message already logged in `room.parts` must be deduplicated even if rebound to Bot a!
-  await env1.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'Hi group' }], requestId: 'im:telegram:c1:g1:room-msg-1' })
+  await env1.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'Hi group' }], requestId: 'im:telegram:c1:g1:room-msg-1', admissionRefs: ['r1'] })
   assert.equal(env1.prompts.length, 1, 'IM message logged in room.parts must NOT replay on Bot a')
 
   // 2) P1: Deferred reconcileRetryTimer must ONLY replay pendingHandoffInputs and NEVER re-run startup zombie-task sweep!
@@ -2152,7 +2154,7 @@ test('follow-up durability invariants: capacity eviction during save, failed no-
   const origGet3 = env3.ctx.get
   env3.ctx.get = name => (name === 'sessionQuery' ? query3 : origGet3(name))
   await assert.rejects(
-    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Retry' }], requestId: 'im:telegram:c1:dm-u1:corrupt-1' }),
+    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Retry' }], requestId: 'im:telegram:c1:dm-u1:corrupt-1', admissionRefs: ['a'] }),
     err => err?.code === 'SESSION_QUERY_CORRUPT_SESSION',
     'SESSION_QUERY_CORRUPT_SESSION containing "not found in surface" must fail closed instead of admitting duplicate',
   )
@@ -2330,18 +2332,18 @@ test('round-1 review invariants: repeat cold lookup preserves durable, non-im sc
   const origGet3 = env3.ctx.get
   env3.ctx.get = name => (name === 'sessionQuery' ? query3 : origGet3(name))
   await assert.rejects(
-    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-1' }),
+    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-1', admissionRefs: ['a'] }),
     err => err?.code === 'ENOENT',
     'bare ENOENT must fail closed',
   )
   errKind = 'corrupt-name'
   await assert.rejects(
-    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-2' }),
+    () => env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-2', admissionRefs: ['a'] }),
     err => err?.name === 'SessionPersistenceCorruptionError',
     'SessionPersistenceCorruptionError without code must still fail closed',
   )
   errKind = 'notfound'
-  await env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-3' })
+  await env3.rt.sendUser({ sessionId: 'b', content: [{ type: 'text', text: 'Test' }], requestId: 'im:telegram:c1:dm-u1:enoent-3', admissionRefs: ['a'] })
   assert.equal(env3.prompts.length, 1, 'SessionPersistenceNotFoundError must be treated as missing session')
 
   // 4) Busy-boundary flush barrier race: when an inbox-pending item transitions to claimed + user/message
@@ -2487,4 +2489,54 @@ test('round-1 review invariants: repeat cold lookup preserves durable, non-im sc
   const disposedResult = await waitPromise
   assert.equal(disposedResult, false)
   assert.ok(Date.now() - startedAt < 1000, 'agent/disposed { agent } payload must settle confirmSessionFlushed immediately')
+})
+
+// [2026-11-27 local] Live incident: SEO Overlord's stored log was corrupt, then cold-log reads timed
+// out after a restart. The IM duplicate check read every Bot's log for each message, and Telegram is
+// handled one update at a time, so every chat stalled. Delivery now reads only the target's own chain
+// plus the chat's former bindings.
+test('IM message to Igor never reads an unrelated Bot\'s cold log (hung or corrupt); a former binding is still checked', async (t) => {
+  const env = await startEnv({
+    team: makeTeam({
+      bots: {
+        a: { id: 'a', name: 'Igor', role: 'Chief Of Staff', sessionId: 'dm-igor', createdAt: 1 },
+        b: { id: 'b', name: 'SEO Overlord', role: 'Overlord', sessionId: 'dm-seo-cold', segments: [{ sessionId: 'dm-seo-old', endedAt: 1 }], createdAt: 2 },
+      },
+    }),
+  })
+  t.after(env.stop)
+  delete env.ctx.sessionController.inspect
+  env.agentMap.delete('dm-seo-cold')
+  const reads = []
+  let seoMode = 'hang'
+  const query = {
+    inspectSession: async (sid) => {
+      reads.push(sid)
+      if (sid === 'dm-seo-cold' || sid === 'dm-seo-old') {
+        if (seoMode === 'hang') return new Promise(() => {})
+        const e = new Error(`stored session "${sid}" is corrupt: SessionFormatError: tool/result is outside an open turn`)
+        e.name = 'SessionQueryError'
+        throw e
+      }
+      throw Object.assign(new Error('not found'), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
+    },
+  }
+  const origGet = env.ctx.get
+  env.ctx.get = name => (name === 'sessionQuery' ? query : origGet(name))
+
+  const started = Date.now()
+  await env.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'Igor, status?' }], requestId: 'im:telegram:c1:dm-u1:igor-1' })
+  seoMode = 'corrupt'
+  await env.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'Igor, again' }], requestId: 'im:telegram:c1:dm-u1:igor-2' })
+  assert.equal(env.prompts.length, 2, 'both Igor-bound messages must land')
+  assert.ok(Date.now() - started < 5000, 'a hung unrelated log must not stall delivery')
+  assert.deepEqual(reads.filter(sid => sid.startsWith('dm-seo')), [], 'an unrelated Bot\'s cold log must never be read')
+
+  // A chat moved off SEO Overlord names it as a former binding: its corrupt log still fails closed.
+  await assert.rejects(
+    () => env.rt.sendUser({ sessionId: 'a', content: [{ type: 'text', text: 'moved chat' }], requestId: 'im:telegram:c1:dm-u1:igor-3', admissionRefs: ['b'] }),
+    /is corrupt/,
+    'a corrupt former binding must still fail closed',
+  )
+  assert.equal(env.prompts.length, 2)
 })

@@ -2080,7 +2080,9 @@ export function install(rt) {
   // after a host restart when completed handoff sessions are unloaded on disk, and across
   // IM chat rebindings for globally unique `im:` platform message IDs.
   // Returns `{ admitted, sessionId?, durable? }` so callers know the exact admitting session.
-  const findAdmittedForSend = async ({ ref, refs, sessionId, requestId, callerSupplied = true, targetOnly = false } = {}) => {
+  // [2026-11-27 local] `scanFleet: false` keeps the cold-disk check to the target's own chain
+  // plus `refs` (a chat's former Bots); the in-memory check across all Bots still runs.
+  const findAdmittedForSend = async ({ ref, refs, sessionId, requestId, callerSupplied = true, targetOnly = false, scanFleet = true } = {}) => {
     if (requestId === undefined) return { admitted: false }
     const owner = logicalOwnerOf(sessionId) ?? logicalOwnerOf(ref)
     const ownerKey = transferOwnerKey(owner)
@@ -2185,7 +2187,9 @@ export function install(rt) {
     }
     // An IM platform message ID (`im:<platform>:<connId>:<chatKey>:<msgId>`) belongs to a
     // single inbound platform event even if the chat was rebound to another Bot/group after restart.
-    if (isImRequest && !targetOnly) {
+    // [2026-11-27 local] Reading every Bot's cold log per message is what jammed Telegram: the
+    // adapter handles one update at a time, so a slow or corrupt peer log blocked every chat.
+    if (isImRequest && !targetOnly && scanFleet) {
       for (const bot of Object.values(state.bots)) addBotCandidates(bot)
       for (const room of Object.values(state.rooms ?? {})) addRoomCandidates(room)
     }
