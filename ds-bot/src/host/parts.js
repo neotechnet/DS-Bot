@@ -1707,7 +1707,10 @@ export function install(rt) {
   // falls back to pruning them when older results alone cannot drop below `target`.
   async function pruneToolResults(agent, { inTurn = false, target } = {}) {
     if (localPart(agent.session)) return { pruned: 0 }
-    if (!inTurn && !isAgentIdle(agent)) return { busy: true, pruned: 0 }
+    // [2026-11-27 local] DSH's session format accepts a tool/result replacement only inside
+    // an open turn. Between turns the pruner's compaction/prune + tool/result pair is written
+    // with no turn open: the live session takes it, but the stored log can never load again.
+    if (!inTurn) return { pruned: 0 }
     const pruner = prunerOf(agent)
     if (typeof pruner?.pruneSession !== 'function') return { pruned: 0 }
     const run = async () => {
@@ -3894,26 +3897,10 @@ export function install(rt) {
     if (!hard && Date.now() < (roomRetry.get(agent.id)?.until ?? 0)) return
     checking.add(agent.id)
     try {
-      // Only mutate the history with tool-result pruning before the steward when a
-      // dry-run predicts pruning alone will drop below lines.check; otherwise keep the
-      // prefix cache intact so writeNote / writeCheckpoint run on the hot KV prefix.
-      const pruner = prunerOf(agent)
-      const dry = pruner === undefined ? { count: 0, saved: 0 } : estimatePrunableSavings(agent.session, pruner)
-      const shouldPruneFirst = pruner !== undefined && (dry === undefined || (dry.count > 0 && tokens - dry.saved < lines.check))
-      if (shouldPruneFirst) {
-        const pruned = await pruneToolResults(agent, { inTurn: false })
-        if (pruned.busy === true) return
-        if (pruned.pruned > 0) {
-          const afterPrune = tokensOf(agent.session)
-          if (afterPrune !== undefined && afterPrune < lines.check) {
-            midTurnCondensed.delete(agent.id)
-            partBase.set(agent.id, afterPrune)
-            return
-          }
-        }
-      } else if (!await tryMaintenanceIdle(agent)) {
-        return
-      }
+      // [2026-11-27 local] No tool-result pruning here: this check runs between turns, where
+      // a pruned replacement leaves a stored log DSH refuses to load (see pruneToolResults).
+      // Pruning still runs inside turns; between turns the steward or a part switch makes room.
+      if (!await tryMaintenanceIdle(agent)) return
       if (!isAgentIdle(agent)) return
       midTurnCondensed.delete(agent.id)
       if (engineOf(agent) === undefined && !await canMakeRoom(agent)) {
