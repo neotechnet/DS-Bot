@@ -27,6 +27,7 @@ const RETRY_MS = 5_000
 const RETRY_MAX_MS = 30_000
 const SEND_ATTEMPTS = 4
 const TYPING_MS = 4_000
+const IM_SEND_RETRY_MS = 3_000
 const CONSUMED_REQUESTS_KEEP = 200
 const WEIXIN_REQUESTS_KEEP = 200
 const FAILED_SENDS_MAX_PER_CHAT = 10
@@ -106,6 +107,7 @@ export function install(rt) {
         steerUsage: 'Write a message after /steer.',
         stale: 'This card was already answered.',
         noFile: 'This file cannot be sent here; send it on the computer.',
+        notDelivered: 'This message did not reach the Bot. Please send it again.',
         greeting: `Hello, I am ${values.name}.`,
         question: `${values.bot} asks: `,
         approval: `${values.bot} asks for approval: `,
@@ -134,6 +136,7 @@ export function install(rt) {
         steerUsage: '请在 /steer 后写要插话的内容。',
         stale: '这张卡已经答过了。',
         noFile: '这个文件发不过去，请在电脑上发。',
+        notDelivered: '这条消息没有送达 Bot，请再发一次。',
         greeting: `你好，我是 ${values.name}。`,
         question: `${values.bot} 问你：`,
         approval: `${values.bot} 请你审批：`,
@@ -162,6 +165,7 @@ export function install(rt) {
         steerUsage: '請在 /steer 後寫要插話的內容。',
         stale: '這張卡已經答過了。',
         noFile: '這個檔案傳不過去，請在電腦上傳。',
+        notDelivered: '這則訊息沒有送達 Bot，請再傳一次。',
         greeting: `你好，我是 ${values.name}。`,
         question: `${values.bot} 問你：`,
         approval: `${values.bot} 請你審批：`,
@@ -190,6 +194,7 @@ export function install(rt) {
         steerUsage: '/steer の後にメッセージを入力してください。',
         stale: 'このカードは回答済みです。',
         noFile: 'このファイルはここでは送信できません。PC から送信してください。',
+        notDelivered: 'このメッセージは Bot に届きませんでした。もう一度送ってください。',
         greeting: `こんにちは、${values.name} です。`,
         question: `${values.bot} からの質問：`,
         approval: `${values.bot} からの承認リクエスト：`,
@@ -218,6 +223,7 @@ export function install(rt) {
         steerUsage: '/steer 뒤에 보낼 메시지를 입력해 주세요.',
         stale: '이미 응답한 카드입니다.',
         noFile: '이 파일은 여기서 보낼 수 없습니다. 컴퓨터에서 보내 주세요.',
+        notDelivered: '이 메시지가 Bot에 전달되지 않았습니다. 다시 보내 주세요.',
         greeting: `안녕하세요, ${values.name}입니다.`,
         question: `${values.bot}의 질문: `,
         approval: `${values.bot}의 승인 요청: `,
@@ -246,6 +252,7 @@ export function install(rt) {
         steerUsage: 'Escribe un mensaje después de /steer.',
         stale: 'Esta tarjeta ya fue respondida.',
         noFile: 'Este archivo no se puede enviar por aquí; envíalo desde el ordenador.',
+        notDelivered: 'Este mensaje no llegó al Bot. Envíalo de nuevo.',
         greeting: `Hola, soy ${values.name}.`,
         question: `${values.bot} pregunta: `,
         approval: `${values.bot} pide aprobación: `,
@@ -274,6 +281,7 @@ export function install(rt) {
         steerUsage: 'Écrivez un message après /steer.',
         stale: 'Cette carte a déjà reçu une réponse.',
         noFile: 'Ce fichier ne peut pas être envoyé ici ; envoyez-le depuis l’ordinateur.',
+        notDelivered: 'Ce message n’est pas arrivé au Bot. Renvoyez-le.',
         greeting: `Bonjour, je suis ${values.name}.`,
         question: `${values.bot} demande : `,
         approval: `${values.bot} demande une approbation : `,
@@ -302,6 +310,7 @@ export function install(rt) {
         steerUsage: 'Schreibe eine Nachricht nach /steer.',
         stale: 'Diese Karte wurde bereits beantwortet.',
         noFile: 'Diese Datei kann hier nicht gesendet werden; sende sie am Computer.',
+        notDelivered: 'Diese Nachricht hat den Bot nicht erreicht. Bitte sende sie noch einmal.',
         greeting: `Hallo, ich bin ${values.name}.`,
         question: `${values.bot} fragt: `,
         approval: `${values.bot} bittet um Freigabe: `,
@@ -1189,6 +1198,9 @@ export function install(rt) {
     return liveConn
   }
   const sendReply = (origin, body, { sessionId, botId, prefix = '' } = {}) => {
+    // [2026-11-27 local] Bots write a lone zero-width space to say nothing after a card;
+    // Telegram counts it as no text and refuses it ("text must be non-empty").
+    if (typeof body !== 'string' || body.replace(/[\s\u200b-\u200f\u2060\ufeff]/g, '') === '') return
     const { conn, chatKey, chat, senderId, binding } = origin
     const where = { key: chatKey, kind: chat.kind, title: chat.title }
     const stageKey = `${conn.id}:${chatKey}`
@@ -1741,7 +1753,22 @@ export function install(rt) {
         // The turn this starts belongs to this chat: its replies go back here and nowhere else.
         if (conn.platform === 'weixin') await rememberWeixinRequest(conn, requestId, msg.chat.key, msg.sender.id)
         else rememberRequest(requestId, conn, msg.chat.key, msg.sender.id)
-        const delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode })
+        // [2026-11-27 local] 0.4.x refuses a message when a cold-part read for its duplicate
+        // check times out (findAdmittedForSend fails closed), and nothing told the sender.
+        // Try once more with the same request id, then tell the chat to resend.
+        let delivered
+        try {
+          delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode })
+        } catch (first) {
+          rt.warn('ds-bot: im message to %s not delivered, retrying once: %s', sessionId, first)
+          await new Promise(resolve => setTimeout(resolve, rt.imSendRetryMs ?? IM_SEND_RETRY_MS))
+          try {
+            delivered = await rt.sendUser({ sessionId, content, requestId, mode: promptMode })
+          } catch (second) {
+            await sendText(conn, msg.chat, text('notDelivered'))
+            throw second
+          }
+        }
         // Persist `conn.seenInbound` ONLY after the exact receiving DSH Session confirms
         // flush() === true (or a cold on-disk session already holds `requestId`), never by
         // resolving the logical Bot/room id whose foreground may have moved since prompt admission.
