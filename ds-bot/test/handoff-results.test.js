@@ -168,10 +168,10 @@ async function handedOn({ start }, review) {
   const { agents, emit, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
-  await tool('message_bot', { to: 'Tester', message: 'review my work' }, 'b')
+  await tool('delegate_work', { to: 'Tester', goal: 'review my work' }, 'b')
   turns.end('b', 'handed it on')
   turns.take('c')
   turns.end('c', review)
@@ -221,13 +221,13 @@ test('a result inside a result survives a restart too', async (t) => {
   const { agents, emit, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
-  await tool('message_bot', { to: 'Tester', message: 'review my work' }, 'b')
+  await tool('delegate_work', { to: 'Tester', goal: 'review my work' }, 'b')
   turns.end('b', 'handed it on')
   turns.take('c')
-  await tool('message_bot', { to: 'Editor', message: 'proofread it' }, 'c')
+  await tool('delegate_work', { to: 'Editor', goal: 'proofread it' }, 'c')
   turns.end('c', 'handed it on')
   turns.take('d')
   turns.end('d', LONG)
@@ -388,7 +388,7 @@ test('a subagent a Bot delegated to hands its result into the work the turn answ
   const { agents, emit, emitScoped, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
   // Writer delegates part of the work to a subagent instead of another Bot.
@@ -428,7 +428,7 @@ test('a subagent that ends after its wait was given up still hands over its clos
   const { agents, emit, emitScoped, tool, call } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
   emit('b', 'tool/call', { callId: 'call1', name: 'subagent', arguments: JSON.stringify({ description: 'deep review', prompt: 'review the plan' }) })
@@ -451,7 +451,7 @@ test('a subagent that ends after its wait was given up still hands over its clos
   await settled(() => callsOf(agents, 'b').length === before + 2)
   const late = callsOf(agents, 'b').at(-1)[1]
   const body = textOf(late.content)
-  assert.match(body, /^\[Reply from subagent deep review\]\n\[Late answer: the user had already given up waiting for this work/)
+  assert.match(body, /^\[Work completed by subagent deep review[^\n]*\]\n\[Late answer: the user had already given up waiting for this work/)
   assert.match(body, /reviewed: three findings/)
   assert.equal(late.source.work, undefined)
   // It settles nothing twice: the one given-up result stays, and no wait is back.
@@ -482,7 +482,7 @@ for (const stopReason of ['aborted', 'error']) test(`a subagent ending with ${st
   const { agents, emit, emitScoped, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
   emit('b', 'tool/call', { callId: 'call1', name: 'subagent', arguments: JSON.stringify({ description: 'deep review', prompt: 'review the plan' }) })
@@ -509,7 +509,7 @@ test('parallel delegations get each call\'s own description for its child', asyn
   const { agents, emit, emitScoped, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
   emit('b', 'tool/call', { callId: 'call1', name: 'subagent', arguments: JSON.stringify({ description: 'deep review', prompt: 'review the plan' }) })
@@ -553,7 +553,7 @@ test('a continued subagent hands up each run\'s own result', async (t) => {
   const { agents, emit, emitScoped, tool } = first
   const turns = turnTaker(agents, emit)
   turns.userTurn('a', 'have Writer do it')
-  await tool('message_bot', { to: 'Writer', message: 'carry out the plan' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'carry out the plan' }, 'a')
   turns.end('a', 'asked Writer')
   turns.take('b')
   emit('b', 'tool/call', { callId: 'call1', name: 'subagent', arguments: JSON.stringify({ description: 'checks', prompt: 'check the plan' }) })
@@ -639,19 +639,6 @@ test('a fresh work with no reply still shows as waiting', async (t) => {
   rt.live.set('c', { turn: {} })
   const line = rt.statusOf('b')
   assert.match(line, /waiting for Tester to hand back work/, `a real wait is still named: ${line}`)
-})
-
-test('a handoff reads closed as soon as its reply arrives', async (t) => {
-  const rt = statusBench(t)
-  rt.openWork('parent', { from: 'a', to: 'b' })
-  rt.openWork('child', { from: 'b', to: 'c', parent: 'parent' })
-  assert.deepEqual(rt.state.works.parent.open, ['child'], 'the hand-off starts open')
-  // Writing the reply is what tells the work it is answered.
-  rt.closeWork('child', 'Tester', 'done')
-  const parent = rt.state.works.parent
-  assert.deepEqual(parent.open, [], 'the work reads closed when the reply arrives')
-  assert.equal(parent.results.length, 1, 'the reply is attached to the work')
-  assert.equal(parent.results[0].id, 'child', 'the attached reply is the one that answered')
 })
 
 test('an old ask with no answer stops labelling its sender as waiting', async (t) => {

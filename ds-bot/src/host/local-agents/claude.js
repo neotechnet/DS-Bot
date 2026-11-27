@@ -1,95 +1,38 @@
 // The Claude Code engine: one process per session, stream-json both ways.
 // stdin takes user/control JSON messages; stdout streams the assistant's
 // events until a `result` ends the turn.
-import { randomUUID } from 'node:crypto'
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { cleanEnv, findEngineExecutable, spawnAgent } from './discover.js'
+import { isAbsolute, join, resolve } from 'node:path'
+import { cleanEnv, findEngineExecutable, spawnAgent, terminateChild } from './discover.js'
 import { lineSplitter } from './lines.js'
 
 // Claude Code tools that only read; the rest may change files or run something.
 const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebFetch', 'WebSearch', 'TodoWrite', 'NotebookRead'])
-
-// Windows allows 32,767 characters for a process's whole command line and Node
-// throws ENAMETOOLONG a little above that, before the process starts. A Bot's
-// assembled system prompt alone can be 40 KB, so it travels in a file and only
-// its path is an argument. The cap here sits below Windows' own so a failure
-// names the offending flag instead of surfacing "spawn ENAMETOOLONG".
-const COMMAND_LINE_LIMIT = 30_000
-const SYSTEM_FILE_DIR = join(tmpdir(), 'dsbot-claude-system')
-const SYSTEM_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1_000
-
-// Files this process still owns, so an ordinary quit leaves none behind. A hard
-// kill runs no handler at all, which is what the age sweep below is for.
-const liveSystemFiles = new Set()
-let swept = false
-
-process.on('exit', () => {
-  for (const file of liveSystemFiles) unlinkQuietly(file)
-})
-
-function unlinkQuietly(file) {
-  liveSystemFiles.delete(file)
-  try { unlinkSync(file) } catch { /* the exit handler and close() can both reach it */ }
-}
-
-// Only a file nobody is reading is ever old enough, because a live session's
-// file is minutes old. So this cannot remove one that a CLI is about to read.
-function sweepStaleSystemFiles(now = Date.now()) {
-  if (swept) return
-  swept = true
-  let names
-  try { names = readdirSync(SYSTEM_FILE_DIR) } catch { return }
-  for (const name of names) {
-    const file = join(SYSTEM_FILE_DIR, name)
-    try {
-      if (now - statSync(file).mtimeMs > SYSTEM_FILE_MAX_AGE_MS) unlinkQuietly(file)
-    } catch { /* another session removed it first */ }
-  }
-}
-
-function writeSystemFile(sessionId, system) {
-  sweepStaleSystemFiles()
-  mkdirSync(SYSTEM_FILE_DIR, { recursive: true, mode: 0o700 })
-  const safe = String(sessionId).replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 40)
-  const file = join(SYSTEM_FILE_DIR, `${safe}-${randomUUID()}.txt`)
-  writeFileSync(file, system, { encoding: 'utf8', mode: 0o600 })
-  liveSystemFiles.add(file)
-  return file
-}
-
-// The system prompt is the only large argument today, but a custom agent's own
-// arguments could grow the same way. Failing here names which one to look at.
-function guardCommandLine(bin, args) {
-  const total = [bin, ...args].reduce((sum, part) => sum + part.length + 3, 0)
-  if (total <= COMMAND_LINE_LIMIT) return
-  let longest = 0
-  for (let index = 1; index < args.length; index += 1) if (args[index].length > args[longest].length) longest = index
-  const owner = longest > 0 && args[longest - 1].startsWith('--') ? args[longest - 1] : 'the agent arguments'
-  throw Object.assign(
-    new Error(`this agent's command line is ${total} characters and Windows allows ${COMMAND_LINE_LIMIT}; the longest argument belongs to ${owner}, so shorten it or use a file-backed form of that flag`),
-    { code: 'LOCAL_AGENT_EXIT' },
-  )
-}
+// On Windows, CreateProcessW caps total command-line length at 32K chars (and .cmd shims at 8K);
+// pass long appended system prompts via `--append-system-prompt-file` to stay well below OS limits.
+const DEFAULT_SYSTEM_FILE_THRESHOLD = process.platform === 'win32' ? 4_000 : 64_000
 
 export class ClaudeEngine {
-  constructor(route, engine, { findExecutable }) {
+  constructor(route, engine, { findExecutable, systemFileThreshold = DEFAULT_SYSTEM_FILE_THRESHOLD } = {}) {
     this.route = route
     this.engine = engine
     this.findExecutable = findExecutable
+    this.systemFileThreshold = systemFileThreshold
+    this.noPromptFile = false
+    this.forkSupported = undefined
     this.sessions = new Map()
   }
 
   // A live process holds its own event queue; the adapter drains it.
-  open(dshSessionId, { cwd, resumeId, system, mode, mcp, model }) {
+  open(dshSessionId, { cwd, resumeId, forkSession = false, system, mode, mcp, model }) {
     let session = this.sessions.get(dshSessionId)
     if (session !== undefined && session.dead) session = undefined
     if (session === undefined) {
       session = new ClaudeSession(this, dshSessionId)
       this.sessions.set(dshSessionId, session)
     }
-    return session.start({ cwd, resumeId, system, mode, mcp, model })
+    return session.start({ cwd, resumeId, forkSession, system, mode, mcp, model })
   }
 
   prompt(session, blocks) {
@@ -125,6 +68,7 @@ export class ClaudeEngine {
 
   async close() {
     for (const session of this.sessions.values()) session.kill()
+    this.sessions.clear()
   }
 }
 
@@ -136,6 +80,7 @@ class ClaudeSession {
     this.waiters = []
     this.dead = false
     this.idWaiters = []
+    this.turnCalls = new Set()
   }
 
   emit(event) {
@@ -152,7 +97,7 @@ class ClaudeSession {
     try { this.child?.stdin.write(`${JSON.stringify(message)}\n`) } catch { this.dead = true }
   }
 
-  async start({ cwd, resumeId, system, mode, mcp, model }) {
+  async start({ cwd, resumeId, forkSession = false, system, mode, mcp, model }) {
     if (this.child !== undefined) return this
     const bin = findEngineExecutable(this.engine.engine, name => this.engine.findExecutable(name))
     if (bin === undefined) throw Object.assign(new Error(`${this.engine.engine.name} is not installed`), { code: 'NO_ADAPTER' })
@@ -160,30 +105,40 @@ class ClaudeSession {
     // The stream-json formats only exist in print mode: without `--print` the
     // CLI starts an interactive session and never speaks this protocol.
     const args = [...(this.engine.engine.args ?? []), '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
-    if (resumeId !== undefined) args.push('--resume', resumeId)
-    // A Bot with a large instruction set puts the whole prompt on the command
-    // line under the inline flag and the process never starts, so the prompt
-    // goes to a file and only its path is an argument.
-    let systemFile
+    if (resumeId !== undefined) {
+      if (forkSession === true && this.engine.forkSupported === false) {
+        // Never silently resume the parent conversation when a fork was requested but unsupported.
+        this.forkUnsupported = true
+        this.dead = true
+        throw Object.assign(new Error(`${this.engine.engine.name} does not support --fork-session`), { code: 'LOCAL_AGENT_EXIT' })
+      }
+      args.push('--resume', resumeId)
+      if (forkSession === true) {
+        args.push('--fork-session')
+        this.usedForkSession = true
+      }
+    }
     if (system !== undefined) {
-      // Local patch 2026-11-09 (codebots): the DSH-built prompt names the
-      // DeepSeek model; on this route the model is Claude Code's.
-      const route = `running in the Claude Code program (model: ${model ?? 'CLI default'})`
-      system = system.replace(/powered by the \S+ model/g, route)
-      try {
-        systemFile = writeSystemFile(this.dshSessionId, system)
-        args.push('--append-system-prompt-file', systemFile)
-      } catch (error) {
-        // A small prompt still starts inline, so a broken temp folder does not
-        // take away a Bot that worked before this file existed.
-        if (system.length >= COMMAND_LINE_LIMIT) throw Object.assign(
-          new Error(`the system prompt could not be written to ${SYSTEM_FILE_DIR} and is too large for the command line: ${error.message}`),
-          { code: 'LOCAL_AGENT_EXIT' },
-        )
+      const threshold = this.engine.systemFileThreshold ?? DEFAULT_SYSTEM_FILE_THRESHOLD
+      if (!this.engine.noPromptFile && system.length > threshold) {
+        const dir = mkdtempSync(join(tmpdir(), 'dsb-claude-sys-'))
+        this.systemPromptDir = dir
+        this.usedPromptFile = true
+        this.onProcessExit = () => { this.cleanupSystemFile() }
+        process.once('exit', this.onProcessExit)
+        try {
+          try { chmodSync(dir, 0o700) } catch {}
+          const promptFile = join(dir, 'system-prompt.txt')
+          writeFileSync(promptFile, system, { flag: 'wx', mode: 0o600 })
+          args.push('--append-system-prompt-file', promptFile)
+        } catch (error) {
+          this.cleanupSystemFile()
+          throw error
+        }
+      } else {
         args.push('--append-system-prompt', system)
       }
     }
-    this.systemFile = systemFile
     if (mode !== undefined) args.push('--permission-mode', mode)
     if (model !== undefined && model !== 'default') args.push('--model', model)
     // Print mode has no one to ask: without a prompt tool a call that needs
@@ -209,20 +164,22 @@ class ClaudeSession {
       args.push('--allowedTools', 'mcp__dsbot')
     }
     this.resumeId = resumeId
-    guardCommandLine(bin, args)
+    cwd = resolve(cwd ?? process.cwd())
+    // A resumed conversation may restore a shell directory we cannot observe.
+    this.cwd = resumeId === undefined ? cwd : undefined
     let child
     try {
-      child = spawnAgent(bin, args, {
-        env: cleanEnv(this.engine.env ?? {}),
+      child = this.child = spawnAgent(bin, args, {
+        env: cleanEnv(this.engine.engine.env ?? this.engine.env ?? {}),
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
     } catch (error) {
-      if (systemFile !== undefined) unlinkQuietly(systemFile)
+      this.dead = true
+      this.cleanupSystemFile()
       throw error
     }
-    this.child = child
     // stderr is not part of the protocol, but it is where a CLI that cannot
     // start says why; its tail goes into the error the turn shows.
     let stderr = ''
@@ -246,7 +203,7 @@ class ClaudeSession {
     })
     child.on('error', (error) => {
       this.dead = true
-      if (systemFile !== undefined) unlinkQuietly(systemFile)
+      this.cleanupSystemFile()
       const failure = fail(`${this.engine.engine.name} could not start: ${error.message}`)
       this.rejectStart?.(failure)
       this.rejectStart = undefined
@@ -254,7 +211,16 @@ class ClaudeSession {
     })
     child.on('exit', (code, signal) => {
       this.dead = true
-      if (systemFile !== undefined) unlinkQuietly(systemFile)
+      this.cleanupSystemFile()
+      // Older Claude CLI builds without `--append-system-prompt-file` reject it before init.
+      if (this.usedPromptFile === true && this.cliSessionId === undefined && /unknown option.*append-system-prompt-file|unrecognized option.*append-system-prompt-file/i.test(stderr)) {
+        this.engine.noPromptFile = true
+        this.promptFileUnsupported = true
+      }
+      if (this.usedForkSession === true && this.cliSessionId === undefined && /unknown option.*fork-session|unrecognized option.*fork-session/i.test(stderr)) {
+        this.engine.forkSupported = false
+        this.forkUnsupported = true
+      }
       // Claude Code deletes old conversations; resuming one that is gone exits
       // before init with this line on stderr.
       if (this.resumeId !== undefined && this.cliSessionId === undefined && /no conversation found/i.test(stderr)) this.resumeMissing = true
@@ -279,6 +245,7 @@ class ClaudeSession {
       case 'system':
         if (event.subtype === 'init') {
           this.cliSessionId = event.session_id
+          if (typeof event.cwd === 'string' && isAbsolute(event.cwd)) this.cwd = event.cwd
           this.model = event.model
           for (const resolve of this.idWaiters.splice(0)) resolve(this.cliSessionId)
         } else if (event.subtype === 'compact_boundary') this.emit({ type: 'compaction', status: 'completed' })
@@ -289,13 +256,18 @@ class ClaudeSession {
         // what the context holds now. A subagent's (parent_tool_use_id) is its own.
         const usage = event.message?.usage
         if (usage !== undefined && event.parent_tool_use_id == null) {
+          if (typeof event.message?.id === 'string' && event.message.id !== '') this.turnCalls.add(event.message.id)
           const used = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'].reduce((sum, key) => sum + (usage[key] ?? 0), 0)
           if (used > 0) this.emit({ type: 'context', used })
         }
         for (const block of event.message?.content ?? []) {
           if (block.type === 'text') this.emit({ type: 'text', text: block.text ?? '' })
           else if (block.type === 'thinking') this.emit({ type: 'thought', text: block.thinking ?? '' })
-          else if (block.type === 'tool_use') this.emit({ type: 'activity', text: `▸ ${claudeActivity(block)}`, ...(String(block.name ?? '').startsWith('mcp__dsbot__') ? { team: true } : {}) })
+          else if (block.type === 'tool_use') {
+            // Shells, subagents and custom tools may change cwd without reporting it.
+            if (!READ_TOOLS.has(block.name)) this.cwd = undefined
+            this.emit({ type: 'activity', text: `▸ ${claudeActivity(block)}`, ...(String(block.name ?? '').startsWith('mcp__dsbot__') ? { team: true } : {}) })
+          }
         }
         break
       }
@@ -304,13 +276,16 @@ class ClaudeSession {
         if (request.subtype === 'can_use_tool') {
           const tool = request.tool_name ?? 'tool'
           this.emit({
-            type: 'permission', id: event.request_id,
-            reply: (optionId) => this.write({
-              type: 'control_response',
-              response: { subtype: 'success', request_id: event.request_id, response: optionId === 'allow' ? { behavior: 'allow', updatedInput: request.input ?? {} } : { behavior: 'deny', message: 'The user denied this action.' } },
-            }),
+            type: 'permission', id: event.request_id, cwd: this.cwd,
+            reply: (optionId) => {
+              if (optionId === 'allow' && !READ_TOOLS.has(tool)) this.cwd = undefined
+              this.write({
+                type: 'control_response',
+                response: { subtype: 'success', request_id: event.request_id, response: optionId === 'allow' ? { behavior: 'allow', updatedInput: request.input ?? {} } : { behavior: 'deny', message: 'The user denied this action.' } },
+              })
+            },
             action: `Run ${tool}`,
-            detail: JSON.stringify(request.input ?? {}).slice(0, 4_000),
+            detail: JSON.stringify(request),
             changes: !READ_TOOLS.has(tool),
             options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
           })
@@ -333,9 +308,12 @@ class ClaudeSession {
           const size = (models.find(([name]) => name === this.model) ?? models.toSorted((a, b) => (b[1]?.contextWindow ?? 0) - (a[1]?.contextWindow ?? 0))[0])?.[1]?.contextWindow
           if (typeof size === 'number' && size > 0) this.emit({ type: 'context', size })
         }
+        const observedCalls = this.turnCalls.size
+        this.turnCalls.clear()
+        const calls = positiveInt(event.num_turns) ?? (observedCalls > 0 ? observedCalls : undefined)
         this.running = false
         this.emit(event.subtype === 'success' || event.is_error !== true
-          ? { type: 'done', reason: 'stop', usage: usageOf(event.usage) }
+          ? { type: 'done', reason: 'stop', usage: usageOf(event.usage, calls) }
           : { type: 'error', error: new Error(event.result ?? 'the agent failed') })
         break
       default: break
@@ -351,6 +329,7 @@ class ClaudeSession {
   }
 
   prompt(blocks) {
+    if (this.running !== true) this.turnCalls.clear()
     this.running = true
     this.write({ type: 'user', message: { role: 'user', content: claudeContent(blocks) } })
     return Promise.resolve()
@@ -371,15 +350,23 @@ class ClaudeSession {
     this.write({ type: 'control_request', request: { subtype: 'interrupt' } })
   }
 
+  cleanupSystemFile() {
+    if (this.onProcessExit !== undefined) {
+      process.off('exit', this.onProcessExit)
+      this.onProcessExit = undefined
+    }
+    const dir = this.systemPromptDir
+    if (dir === undefined) return
+    this.systemPromptDir = undefined
+    try { rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
+
   kill() {
     this.dead = true
-    // The CLI read the prompt at startup and a kill ends the session, so the
-    // file cannot be needed again and is removed now rather than at exit.
-    if (this.systemFile !== undefined) unlinkQuietly(this.systemFile)
-    this.systemFile = undefined
-    this.child?.kill('SIGTERM')
-    setTimeout(() => { try { this.child?.kill('SIGKILL') } catch {} }, 5_000).unref?.()
+    this.cleanupSystemFile()
+    const child = this.child
     this.child = undefined
+    terminateChild(child)
   }
 }
 
@@ -413,9 +400,12 @@ function claudeContent(blocks) {
   return out.length > 0 ? out : [{ type: 'text', text: '' }]
 }
 
-const usageOf = usage => (usage === undefined ? undefined : {
+const positiveInt = value => (Number.isSafeInteger(value) && value > 0 ? value : undefined)
+
+const usageOf = (usage, calls) => (usage === undefined ? undefined : {
   inputTokens: usage.input_tokens ?? 0,
   outputTokens: usage.output_tokens ?? 0,
   ...(usage.cache_read_input_tokens ? { cacheReadTokens: usage.cache_read_input_tokens } : {}),
   ...(usage.cache_creation_input_tokens ? { cacheWriteTokens: usage.cache_creation_input_tokens } : {}),
+  ...(calls !== undefined && calls > 1 ? { calls } : {}),
 })

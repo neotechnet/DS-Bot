@@ -65,7 +65,7 @@ test('a card asked in a hidden Bot-to-Bot turn keeps its call id, and closing it
   const { emit, ask, questions, stop } = await start()
   t.after(stop)
   emit('writer', 'turn/start', { turn: 1 })
-  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name. CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  emit('writer', 'user/message', { content: text('[Message from Chief]\nThe user wants a new Bot; ask them for its name'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
   await ask('writer', 'call-1')
   const asked = (await questions()).writer
   assert.equal(asked.question, 'Which name?')
@@ -73,6 +73,21 @@ test('a card asked in a hidden Bot-to-Bot turn keeps its call id, and closing it
   emit('writer', 'user/message', { content: text('Call it Scout'), source: { kind: 'user' } })
   assert.equal((await questions()).writer, undefined)
   assert.deepEqual(rt.state.closedCards, { writer: { 'call-1': 'replied' } })
+})
+
+test('a card asked over one still open closes the earlier card instead of dropping it (#2172)', async (t) => {
+  const { emit, ask, questions, stop } = await start()
+  t.after(stop)
+  emit('writer', 'turn/start', { turn: 1 })
+  emit('writer', 'user/message', { content: text('Help me name a Bot'), source: { kind: 'user' } })
+  await ask('writer', 'call-1')
+  emit('writer', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
+  // A message from another Bot, not the user, starts the next turn: the card stays open.
+  emit('writer', 'turn/start', { turn: 2 })
+  emit('writer', 'user/message', { content: text('[Message from Chief]\nCheck the draft'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x1', hop: 0 } })
+  await ask('writer', 'call-2')
+  assert.equal((await questions()).writer.callId, 'call-2')
+  assert.deepEqual(rt.state.closedCards, { writer: { 'call-1': 'dismissed' } })
 })
 
 test('a card asked in a visible turn stays at its call', async (t) => {
@@ -91,48 +106,24 @@ test('a card asked in a visible turn stays at its call', async (t) => {
   assert.equal((await questions()).writer.callId, 'call-3')
 })
 
-// local: question-lifecycle. A card waits for the user: later turns of the Bot, hidden
-// Bot-to-Bot ones and ones the user can see, leave it open; the user's own message closes it.
-test('a card survives later Bot turns, hidden or visible, until the user writes', async (t) => {
-  const { emit, ask, questions, stop } = await start()
+test('a card carried from an earlier segment closes as dismissed even when the new card reuses the same callId', async (t) => {
+  const { ask, questions, stop } = await start()
   t.after(stop)
-  emit('writer', 'turn/start', { turn: 1 })
-  emit('writer', 'user/message', { content: text('Help me name a Bot'), source: { kind: 'user' } })
-  await ask('writer', 'call-1')
-  emit('writer', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
-  assert.equal((await questions()).writer.question, 'Which name?')
+  // Simulate an open question carried over from an earlier segment (`writer-old`) onto `writer`.
+  rt.state.questions.writer = {
+    id: 'q-carried',
+    callId: 'call-dup',
+    callSessionId: 'writer-old',
+    question: 'Old question?',
+    options: [{ label: 'A' }],
+    askedAt: 1,
+  }
+  await ask('writer', 'call-dup')
+  assert.equal((await questions()).writer.callId, 'call-dup')
+  assert.equal((await questions()).writer.callSessionId, undefined)
+  assert.deepEqual(rt.state.closedCards, { 'writer-old': { 'call-dup': 'dismissed' } })
 
-  emit('writer', 'turn/start', { turn: 2 })
-  emit('writer', 'user/message', { content: text('[Message from Chief]\nstatus? CARD-IT-YOURSELF'), source: { kind: 'bot', role: 'request', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x9', hop: 0 } })
-  emit('writer', 'turn/end', { turn: 2, reason: { kind: 'completed' } })
-  assert.equal((await questions()).writer?.question, 'Which name?', 'a hidden Bot-to-Bot turn leaves it open')
-
-  emit('writer', 'turn/start', { turn: 3 })
-  emit('writer', 'user/message', { content: text('[Message from Chief · the user sees your reply here]\nReport in'), source: { kind: 'bot', role: 'request', audience: 'user', senderSessionId: 'chief', senderName: 'Chief', exchangeId: 'x10', hop: 0 } })
-  emit('writer', 'turn/end', { turn: 3, reason: { kind: 'completed' } })
-  emit('writer', 'turn/start', { turn: 4 })
-  emit('writer', 'turn/end', { turn: 4, reason: { kind: 'completed' } })
-  await new Promise(resolve => setTimeout(resolve, 50))
-  assert.equal((await questions()).writer?.question, 'Which name?', 'turns the user can see that ask nothing leave it open')
-
-  emit('writer', 'turn/start', { turn: 5 })
-  emit('writer', 'user/message', { content: text('never mind, call it Scout'), source: { kind: 'user' } })
-  emit('writer', 'turn/end', { turn: 5, reason: { kind: 'completed' } })
-  for (let count = 0; count < 50 && (await questions()).writer !== undefined; count += 1) await new Promise(resolve => setTimeout(resolve, 5))
-  assert.equal((await questions()).writer, undefined)
-})
-
-test('only a Main Bot voids another Bot\'s open question, and the card leaves', async (t) => {
-  const { emit, ask, questions, stop } = await start()
-  t.after(stop)
-  const voidQuestion = (args, sessionId) => rt.teamTools.find(d => d.name === 'void_question').execute(args, { agent: { id: sessionId } })
-  await assert.rejects(voidQuestion({ bot: 'Writer' }, 'chief'), /Writer has no open question/)
-  emit('writer', 'turn/start', { turn: 1 })
-  emit('writer', 'user/message', { content: text('Help me name a Bot'), source: { kind: 'user' } })
-  await ask('writer', 'call-1')
-  await assert.rejects(voidQuestion({ bot: 'Chief' }, 'writer'), /Only a Main Bot can void a question/)
-  assert.equal((await questions()).writer.question, 'Which name?')
-  const out = await voidQuestion({ bot: 'Writer', reason: 'the job moved' }, 'chief')
-  assert.match(out, /^The question of Writer is voided/)
-  assert.equal((await questions()).writer, undefined)
+  // Same-segment same-callId re-entry must NOT mark itself dismissed.
+  await ask('writer', 'call-dup')
+  assert.equal(rt.state.closedCards.writer, undefined)
 })

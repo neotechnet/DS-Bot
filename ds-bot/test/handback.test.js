@@ -186,13 +186,14 @@ async function start(seed) {
   return { ctx, agents, emit, tool, home, stop }
 }
 
-test('one message reaches the model once: steered with its body, then handed back as a pointer', async (t) => {
+test('one message reaches the model once: steered with its body, then handed back as a pointer', { skip: '[2026-11-27 local] 0.4.x delegate_work queues peer work instead of steering it into a user turn; the pointer is covered by the joined-request tests in bot-messages' }, async (t) => {
   const { agents, emit, tool, stop } = await start(team())
   t.after(stop)
 
   emit('b', 'turn/start', { turn: 1 })
   emit('b', 'user/message', { content: textBlock('write the letter'), source: { kind: 'user' } })
-  await tool('message_bot', { to: 'Writer', message: 'which year is the data?' }, 'a')
+  // 0.4.x: Bot-to-Bot work goes through delegate_work (message_bot is gone).
+  await tool('delegate_work', { to: 'Writer', goal: 'which year is the data?', when: 'now' }, 'a')
 
   // What the running turn was shown, cut in at its next step.
   const steered = agents.get('b').calls[0][1]
@@ -220,11 +221,11 @@ test('a message that arrives while the Bot is idle keeps its whole body', async 
   const { agents, tool, stop } = await start(team())
   t.after(stop)
 
-  await tool('message_bot', { to: 'Writer', message: 'how are you' }, 'a')
+  await tool('delegate_work', { to: 'Writer', goal: 'how are you' }, 'a')
   assert.deepEqual(agents.get('b').calls.map(([kind]) => kind), ['steer'])
   const [, only] = agents.get('b').calls[0]
   // Nothing was read before it, so nothing is handed back: no pointer, no flag.
-  assert.equal(textOf(only.content), '[Message from Chief]\nhow are you')
+  assert.match(textOf(only.content), /^\[Work #W\d+ from Chief[^\]]*\]\nhow are you$/)
   assert.equal(only.source.handedBack, undefined)
   assert.equal(only.source.deferred, undefined)
 })
