@@ -3,4 +3,93 @@
 # ("lint :: <file> :: <rule> :: <message>") that fails on purpose because the stack keeps
 # local behaviour upstream rejects. The Stack check fails on any failure not listed here, and
 # on any listed line that now passes, so this list can only shrink.
+# Baseline taken from Stack check run 46053116385 on stack/installed-0.4.1 at a3824f56.
 lint :: src/host/im/index.js :: eslint(no-unused-vars) :: Variable 'approvalOrigin' is declared but never used.
+test/bot-messages.test.js :: a Bot busy in a group gets the work in its own chat, and the sender is told
+test/bot-messages.test.js :: a Bot's answer waits for the work it handed on, and carries what came back
+test/bot-messages.test.js :: a joined request crosses a part switch and is handed back in the new part
+test/bot-messages.test.js :: a request from a name with brackets keeps its body when replayed after the current work
+test/bot-messages.test.js :: a request steered into a running turn is recorded once and answered in a turn of its own
+test/bot-messages.test.js :: a request that joins a Bot-triggered turn is handed back; the trigger gets the whole turn
+test/bot-messages.test.js :: a request that joins a user-started turn is handed back, not answered with the turn's text
+test/bot-messages.test.js :: a result read during other work comes back in a turn of its own and goes on with its work
+test/bot-messages.test.js :: a schedule-started turn stays visible when a request joins
+test/context-amnesia.test.js :: noteAttempts keeps substantial truncated partial note when retries hit max-tokens, prefers non-truncated partial, and askSteward lowers reasoning effort
+test/context-amnesia.test.js :: partLines flushes replies past page cap, askSteward scans past 2 pages on tool-heavy turns, and historyEntry keeps schedules
+test/context-pr2-local-agents.test.js :: Claude Code writes long system prompts to a temp file via --append-system-prompt-file and cleans up on exit
+test/context-pr2-local-agents.test.js :: D2: ACP, Codex, and Claude resume loss throw LOCAL_AGENT_SESSION_LOST (no silent replay) and parts.js switches with fallback=runtime-lost
+test/context-pr3-runtime.test.js :: L2: Codex and Claude receive instructions via their native channel without duplicating them in replay prompt, while ACP keeps prompt instructions
+test/context-pr4-pack.test.js :: D8 regressions: Claude rejected --fork-session retries once on fresh session with fallbackContext (never resuming parent); openTaskPart probes fork on demand and preserves parent inheritedSegments
+test/context-pr4-pack.test.js :: D8: versionSupportsFork, Codex thread/fork RPC + unsupported cache, and Claude --fork-session deferred fork
+test/external-approval-cwd.test.js :: a direct MCP approval call has no trusted runtime permission evidence
+test/external-approval-cwd.test.js :: a pending driver callback supplies trusted evidence without accepting tool arguments
+test/external-approval-cwd.test.js :: identical Claude relative commands in different spawn directories produce distinct review evidence
+test/external-approval-cwd.test.js :: missing external cwd opens an answerable manual card without invoking the reviewer
+test/external-approval-cwd.test.js :: trusted callback evidence reaches the reviewer and cannot be supplied by tool arguments
+test/im-format.test.js :: Telegram leaves a four-space literal fence marker alone
+test/im-format.test.js :: Telegram leaves headings and tables inside indented backtick fences literal
+test/im-format.test.js :: Telegram preserves headings and tables inside tilde and backtick code fences
+test/im-format.test.js :: Telegram renders headings and Markdown tables as readable rows (#2173)
+test/im-format.test.js :: a fence after a list marker keeps its contents and later prose literal
+test/im-format.test.js :: a fence in a list cannot expose the contents of a later independent fence
+test/im-format.test.js :: a four-space backtick marker inside a fence does not close it
+test/im-format.test.js :: a literal backtick fence disables formatting even across a dev code block
+test/im-format.test.js :: a standalone triple-backtick span cannot expose a later fence body
+test/im-format.test.js :: a tab after a closing backtick fence leaves later Telegram prose outside code
+test/im-format.test.js :: a triple-backtick line inside a four-backtick fence does not expose headings or tables
+test/im-format.test.js :: an unclosed indented fence leaves later Telegram headings and tables literal
+test/im-format.test.js :: ordinary backtick code blocks do not disable Telegram formatting between them
+test/im.test.js :: API turns cannot acquire an IM origin from input arriving during their output
+test/im.test.js :: IM dispatch return or task-report coalesced into a non-IM Web/Bot turn never hijacks that turn for IM (#1836, #1894)
+test/im.test.js :: IM-origin delegate_work dispatch returns the summary reply to the originating IM chat and respects unpair/mix guards (#1836)
+test/im.test.js :: IM-origin post_to_group routes group approval and final report back to the originating IM DM (#1836, #1894)
+test/im.test.js :: Web, schedule, or goal input joining an ongoing group member drops the IM origin
+test/im.test.js :: Web, schedule, or goal input joining an ongoing group round drops the IM origin
+test/im.test.js :: Web-initiated dispatch return coalesced into an active IM DM turn drops origin so Web result never leaks to IM (#1836)
+test/im.test.js :: drainRoomInbox classifies drained user messages through the IM origin state machine (cross-chat drop, unknown rpcId drop, IM claim, and Web report taint)
+test/im.test.js :: external post_to_group never leaks into an IM-bound group (idle reset, cross-chat active round, and late work isolation) (#1836, #1894)
+test/im.test.js :: group IM dispatch return blocks live late Web work, keeps multi-user IM group alive, and respects member non-IM turns (#1836, #1894)
+test/im.test.js :: group IM origin: same-IM follow-up, continuation post, and card answer preserve origin; non-IM inputs immediately drop forwarding
+test/im.test.js :: local Web input in a group taints pending IM-origin roomReport, and untainted IM group tasks forward approvals safely (#1836, #1894)
+test/im.test.js :: merged Web + IM delegate_work work stores mixed marker and drops IM origin when coalesced into an active IM turn (#1836)
+test/im.test.js :: reply origin: current-turn launch ownership (legacy child metadata)
+test/im.test.js :: reply origin: current-turn launch ownership (missing job id)
+test/im.test.js :: reply origin: current-turn launch ownership (missing job owner)
+test/im.test.js :: reply origin: current-turn launch ownership (unknown child)
+test/im.test.js :: reply origin: current-turn launch ownership (unknown job)
+test/im.test.js :: reply origin: current-turn launch ownership (wrong job owner)
+test/im.test.js :: same-IM report_back: false before report_back: true stays untainted, and failed postToRoom never taints existing IM reports (#1836, #1894)
+test/local-agent-context.test.js :: Claude Code multi-step turn: preserves full cumulative billed tokens + num_turns calls while keeping single-step context
+test/local-agent-context.test.js :: channel run-stats replaces distorted cumulative DSH contextPressure with CLI per-step context occupancy
+test/local-agents-profiles.test.js :: probeSignIn isolates profile env, file fallbacks, and skips macOS Keychain for isolated profiles
+test/local-agents-profiles.test.js :: profile CRUD endpoints create 0o700 dirs, register routes, probe independently, reload on update, and preserve files on remove
+test/local-agents-profiles.test.js :: profile route parsing, validation, env isolation, and sign-in hints
+test/local-agents-profiles.test.js :: two concurrent profiles of the same CLI spawn isolated processes with distinct config dirs (Claude, Codex)
+test/local-agents-profiles.test.js :: updating or removing a profile during an active reply fails the stream explicitly and rolls back unread markers
+test/local-agents.test.js :: ClaudeEngine can_use_tool deny sends required message string (#1539)
+test/local-agents.test.js :: ClaudeEngine.steer unwraps block arrays and strings without double-wrapping
+test/local-agents.test.js :: claude receives Anthropic base64 image blocks for text+image and image-only turns
+test/local-agents.test.js :: claude stream-json: thinking, activity line, usage
+test/local-agents.test.js :: claude: a failed resume keeps the saved session id
+test/local-agents.test.js :: claude: a host restart after a failed start still replays the unread input
+test/local-agents.test.js :: claude: a retry after a pre-init exit starts a new CLI
+test/local-agents.test.js :: claude: a saved conversation the CLI no longer has starts over with the history
+test/local-agents.test.js :: claude: an explicit retry includes the message from a pre-init stall
+test/local-agents.test.js :: claude: another model restarts only that conversation's process, with its new tool server
+test/local-agents.test.js :: claude: print mode asks DS Bot for permission and lets team tools through
+test/local-agents.test.js :: claude: the retry flow replays the unanswered message
+test/local-agents.test.js :: claude: the retry replays the input the dead CLI never read
+test/local-agents.test.js :: claude: the session id from init is saved and the next host resumes it
+test/local-agents.test.js :: every built-in CLI in ENGINES has valid metadata, badge, valid ink, avatar, and mode mapping
+test/perf-client.test.js :: #2050 TeamSidebar caps 300ms collapse retries when shell stays uncollapsed
+test/perf-subsystems.test.js :: im/index.js failedSends evicts oldest images when buffered image bytes exceed 20 MB cap
+test/perf-subsystems.test.js :: local-agents install deduplicates concurrent probeVersions and aborts superseded force probeSignIns
+test/questions.test.js :: a card asked in a hidden Bot-to-Bot turn keeps its call id, and closing it records at that call
+test/questions.test.js :: a card asked over one still open closes the earlier card instead of dropping it (#2172)
+test/sidebar-switch.test.js :: aborting an active drag on hide ignores pointerup, and panelYield during settle keeps rail margin
+test/sidebar-switch.test.js :: continuing to drag width right after unfolding from rail clears spring lag immediately
+test/sidebar-switch.test.js :: hiding the sidebar during post-drag settle clears inline drag styles and does not restore rail margin
+test/sidebar-switch.test.js :: the column draws its first mount in place and slides in only after being hidden
+test/view-reply.test.js :: a hidden-turn card closes into closedCards at its call, never into a dock record
+test/view-reply.test.js :: show_view permits display, choice and typed views in IM-origin groups
+test/view-reply.test.js :: view-reply claims the card, refuses a stale or invalid answer, and restores the card when queueing fails
